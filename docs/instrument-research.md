@@ -10,6 +10,34 @@ file belonging to Thermo's proprietary installer (which lives in the parent
 `IR Software/` folder, outside this repo) was opened, unpacked, or inspected, and
 no Thermo software or drivers were downloaded as part of this research.
 
+## Confirmed on the user's instrument (2026-10-08)
+
+Observed with `Get-PnpDevice` on the Windows PC that runs OMNIC Paradigm, with a
+Nicolet Summit X attached (OS device metadata only; no Thermo software was inspected):
+
+| Property | Value |
+|---|---|
+| USB VID:PID | **0EBB:000C** |
+| Bus-reported description | "Nicolet Summit" |
+| Windows device class | "FT-IR Spectrometer Devices" |
+| Bound Windows driver (service) | **NicUsbWdf** (Thermo Fisher Scientific, v1.2.3.0) |
+| Network interfaces added | none (plain USB device, no RNDIS/CDC-ECM) |
+
+Consequences:
+
+- **macOS / Linux:** no vendor driver exists, so an OpenFTIR driver can use
+  libusb (pyusb) directly. On Linux install `packaging/linux/99-openftir.rules`.
+- **Windows:** the device is claimed by Thermo's own kernel driver, so libusb
+  cannot open it while that driver is bound. Options, in order of preference:
+  1. UsbDk (filter driver; libusb's UsbDk backend can detach the device from
+     NicUsbWdf on demand without uninstalling it, so Paradigm keeps working).
+  2. Replace the driver with WinUSB via Zadig while using OpenFTIR (Paradigm
+     will not see the instrument until the original driver is restored).
+  Talking to NicUsbWdf's private interface is out of scope: it would require
+  reverse engineering Thermo's software.
+- Still unknown: interface/endpoint layout (next probe with libusb, ideally
+  from the Mac/Linux side) and the protocol itself (Step 3 below).
+
 ## TL;DR
 
 - **Your Summit X has no embedded computer.** It connects to a Windows PC over a

@@ -1,24 +1,14 @@
-# udev rules for OpenFTIR spectrometer instruments
-# Copy to /etc/udev/rules.d/99-openftir.rules and reload with:
-#   sudo udevadm control --reload-rules
-#   sudo udevadm trigger
+# udev rules for OpenFTIR spectrometer instruments.
+# Lets logged-in users (and the plugdev group) access the instrument over
+# libusb without root.
+#
+# Install:
+#   sudo cp packaging/linux/99-openftir.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# then unplug and replug the instrument.
 
-# TEMPLATE: Replace VID and PID below with values from your instrument
-# To find the VID:PID, run: tools/probe_instrument.py
-# or: lsusb | grep -i "your-instrument-name"
+# Thermo Fisher Nicolet Summit (confirmed on a Summit X, USB 0ebb:000c)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0ebb", ATTRS{idProduct}=="000c", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
-# Example for Nicolet Summit (Thermo, USB interface):
-# Uncomment and set the correct VID (vendor ID) and PID (product ID)
-# SUBSYSTEMS=="usb", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="YYYY", MODE="0666", GROUP="plugdev", TAG="uaccess"
-
-# Generic libusb-based instrument (example):
-# SUBSYSTEMS=="usb", ATTRS{idVendor}=="0xYYYY", ATTRS{idProduct}=="0xZZZZ", GROUP="plugdev", TAG="uaccess"
-
-# Instructions:
-# 1. Plug in your spectrometer
-# 2. Run: lsusb
-# 3. Find your instrument in the list, note its Vendor ID (before colon) and Product ID (after colon)
-# 4. Edit this file and uncomment/add a line with your VID and PID
-# 5. Save and reload: sudo udevadm control --reload-rules && sudo udevadm trigger
-# 6. Unplug and replug the device
-# 7. Test with: openftir-gui or python -m openftir.cli list-instruments
+# Other instruments: find the VID:PID with `openftir-cli probe` (or `lsusb`)
+# and add a line like the one above (lowercase hex, no 0x prefix).
