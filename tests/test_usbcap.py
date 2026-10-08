@@ -393,3 +393,21 @@ def test_guess_arrays_locates_centre_burst(tmp_path):
     burst = guesses["float32le"].centre_burst
     assert burst is not None
     assert abs(burst.index - 1024) <= 3
+
+
+def test_pairing_handles_recycled_irp_ids():
+    # Windows reuses IRP addresses back to back; each submit/complete pair
+    # must still become its own transfer (seen in a real Summit capture).
+    from tools.usbcap.model import TransferType, UsbEvent, pair_events
+
+    events = []
+    for i in range(5):
+        payload = f"<cmd>{i}</cmd>".encode()
+        events.append(UsbEvent(t=i, bus=1, device=4, endpoint=1, direction_in=False,
+                               transfer_type=TransferType.BULK, is_submit=True, status=0,
+                               xfer_id=0xABC, data=payload))
+        events.append(UsbEvent(t=i + 0.1, bus=1, device=4, endpoint=1, direction_in=False,
+                               transfer_type=TransferType.BULK, is_submit=False, status=0,
+                               xfer_id=0xABC))
+    transfers = pair_events(events)
+    assert [t.data for t in transfers] == [f"<cmd>{i}</cmd>".encode() for i in range(5)]

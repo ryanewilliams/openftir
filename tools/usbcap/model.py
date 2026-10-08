@@ -153,19 +153,34 @@ def pair_events(events: Iterable[UsbEvent]) -> list[Transfer]:
     one, and payload bytes from all matching-direction stages are
     concatenated in time order.
 
+    Ids are only unique while a transfer is in flight: Windows recycles IRP
+    addresses immediately (a real Summit capture reused one IRP for dozens of
+    consecutive bulk transfers), so events are grouped sequentially. A group
+    is keyed by (id, bus, device, endpoint, direction); a bulk/interrupt/iso
+    group closes at its completion, and a control group (whose SETUP, DATA
+    and STATUS stages share one id) closes when the next submit with the same
+    key arrives.
+
     Transfers are returned sorted by their representative timestamp.
     """
-    groups: dict[int, list[UsbEvent]] = {}
-    order: list[int] = []
-    for ev in events:
-        if ev.xfer_id not in groups:
-            groups[ev.xfer_id] = []
-            order.append(ev.xfer_id)
-        groups[ev.xfer_id].append(ev)
+    open_groups: dict[tuple, list[UsbEvent]] = {}
+    closed: list[list[UsbEvent]] = []
+    for ev in sorted(events, key=lambda e: e.t):
+        key = (ev.xfer_id, ev.bus, ev.device, ev.endpoint, ev.direction_in)
+        group = open_groups.get(key)
+        if ev.is_submit and group is not None and any(e.is_complete for e in group):
+            closed.append(open_groups.pop(key))
+            group = None
+        if group is None:
+            group = open_groups[key] = []
+        group.append(ev)
+        if ev.is_complete and ev.transfer_type != TransferType.CONTROL:
+            closed.append(open_groups.pop(key))
+    closed.extend(open_groups.values())
 
     transfers: list[Transfer] = []
-    for xid in order:
-        evs = sorted(groups[xid], key=lambda e: e.t)
+    for evs in closed:
+        xid = evs[0].xfer_id
         base = evs[0]
         submits = [e for e in evs if e.is_submit]
         completes = [e for e in evs if e.is_complete]
