@@ -61,25 +61,31 @@ def _summary_text(report: dict[str, Any]) -> str:
 
     usb_info = report.get("usb", {})
     devices = usb_info.get("devices", []) or []
-    lines.append(f"USB enumeration method: {usb_info.get('method', '?')}")
+    lines.append(
+        f"USB enumeration method: {usb_info.get('method', '?')} "
+        f"(backend: {usb_info.get('backend', 'n/a')})"
+    )
     if usb_info.get("method") == "pyusb":
         lines.append(f"  {len(devices)} USB device(s) found")
-        for dev in devices:
-            lines.append(
-                f"    {dev.get('vendor_id')}:{dev.get('product_id')}  "
-                f"manufacturer={dev.get('manufacturer')!r}  product={dev.get('product')!r}"
-            )
     else:
         lines.append("  (raw platform-tool output saved in the JSON report)")
     lines.append("")
 
-    usb_highlights = report.get("usb_highlights") or []
-    if usb_highlights:
-        lines.append("Thermo/Nicolet-looking USB matches:")
-        for h in usb_highlights:
-            lines.append(f"  - {h}")
+    from openftir.probe import format_thermo_matches
+
+    thermo_matches = report.get("usb_thermo_matches") or []
+    if thermo_matches:
+        lines.append(f"Thermo/Nicolet instrument(s) found ({len(thermo_matches)}):")
+        for block in format_thermo_matches(thermo_matches):
+            lines.append(block)
+            lines.append("")
     else:
-        lines.append("No Thermo/Nicolet-looking USB devices found.")
+        lines.append("No Thermo/Nicolet USB device identified.")
+        usb_highlights = report.get("usb_highlights") or []
+        if usb_highlights:
+            lines.append("Weaker USB highlights (string matches only -- inspect the raw report):")
+            for h in usb_highlights:
+                lines.append(f"  - {h}")
     lines.append("")
 
     net_info = report.get("network", {})

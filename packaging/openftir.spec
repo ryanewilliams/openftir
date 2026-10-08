@@ -16,16 +16,25 @@ or ``pyinstaller packaging/openftir.spec``.
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_submodules
 
 HERE = SPECPATH  # noqa: F821 - injected by PyInstaller
 # Drivers are imported lazily by name from the registry, so PyInstaller's
 # import scanner cannot see them; bundle every openftir submodule explicitly.
 hidden = collect_submodules("openftir")
+# usb.backend.libusb1 is loaded dynamically by pyusb; libusb_package ships the
+# prebuilt libusb-1.0 shared library the probe's USB enumeration needs, since a
+# frozen app can't rely on the target machine having a system libusb installed.
+hidden += ["usb.backend.libusb1", "libusb_package"]
+
+libusb_binaries = collect_dynamic_libs("libusb_package")
+libusb_datas = collect_data_files("libusb_package")
 
 common = dict(
     pathex=[os.path.join(HERE, "..", "src")],
     hiddenimports=hidden,
+    binaries=libusb_binaries,
+    datas=libusb_datas,
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
     noarchive=False,
 )

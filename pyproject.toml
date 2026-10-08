@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["PySide6>=6.5", "pyqtgraph>=0.13"]
-usb = ["pyusb>=1.2"]
+gui = ["PySide6>=6.5", "pyqtgraph>=0.13", "openftir[probe]"]
+probe = ["pyusb>=1.2", "libusb-package"]
 dev = ["pytest>=7", "pytest-qt>=4", "openftir[gui]"]
 
 [project.scripts]
