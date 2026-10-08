@@ -13,6 +13,7 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QApplication
 
 from openftir.gui.main_window import MainWindow
+from openftir.gui.workers import wait_for_workers
 
 
 def main() -> int:
@@ -23,7 +24,10 @@ def main() -> int:
     window = MainWindow()
     window.resize(1280, 800)
     window.show()
-    return app.exec()
+    code = app.exec()
+    # Let in-flight instrument calls finish instead of aborting mid-thread.
+    wait_for_workers()
+    return code
 
 
 if __name__ == "__main__":

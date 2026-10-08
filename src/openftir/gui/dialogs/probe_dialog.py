@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from openftir.gui.workers import CallWorker
+from openftir.gui.workers import CallWorker, start_worker
 
 _EXPLANATION = (
     "This tool only lists USB devices and network interfaces on this computer; "
@@ -162,9 +162,7 @@ class ProbeDialog(QDialog):
         worker = CallWorker(run_probe)
         worker.succeeded.connect(self._on_probe_done)
         worker.failed.connect(self._on_probe_failed)
-        # Hold a reference so PySide doesn't garbage-collect a running QThread.
-        self._worker = worker
-        worker.start()
+        self._worker = start_worker(worker)
 
     def _on_probe_done(self, report: dict) -> None:
         self._report = report

@@ -8,6 +8,7 @@ freezes the UI.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QTimer, Signal
@@ -31,7 +32,7 @@ from openftir.instruments import registry
 from openftir.instruments.base import CollectParams, Instrument, InstrumentInfo
 from openftir.processing import ratio
 from openftir.spectrum import Spectrum, YUnit
-from openftir.gui.workers import CallWorker, CollectWorker
+from openftir.gui.workers import CallWorker, CollectWorker, start_worker
 
 _BACKGROUND_WARN_AFTER = timedelta(minutes=60)
 _SIMULATED_SAMPLES = ["polystyrene", "water-vapour", "none"]
@@ -51,7 +52,8 @@ class CollectPanel(QWidget):
         self._info: InstrumentInfo | None = None
         self._background: Spectrum | None = None
         self._background_time: datetime | None = None
-        self._worker = None  # CallWorker | CollectWorker, kept alive while running
+        self._worker = None  # current CollectWorker, so Cancel can reach it
+        self._instrument_lock = threading.Lock()
         self._pending_mode: str | None = None
 
         layout = QVBoxLayout(self)
@@ -174,10 +176,9 @@ class CollectPanel(QWidget):
 
     def _on_sim_sample_changed(self, name: str) -> None:
         if self._instrument is not None and hasattr(self._instrument, "set_sample"):
-            worker = CallWorker(self._instrument.set_sample, name)
+            worker = CallWorker(self._locked(self._instrument.set_sample), name)
             worker.failed.connect(lambda msg: self._report_error("Set Sample", msg))
-            self._keep_worker(worker)
-            worker.start()
+            start_worker(worker)
 
     def _on_connect(self) -> None:
         driver_id = self.driver_combo.currentText()
@@ -199,11 +200,10 @@ class CollectPanel(QWidget):
         self._instrument = instrument
         self.connect_btn.setEnabled(False)
         self.status_label.setText("Connecting...")
-        worker = CallWorker(instrument.connect)
+        worker = CallWorker(self._locked(instrument.connect))
         worker.succeeded.connect(self._on_connected)
         worker.failed.connect(self._on_connect_failed)
-        self._keep_worker(worker)
-        worker.start()
+        start_worker(worker)
 
     def _on_connected(self, info: InstrumentInfo) -> None:
         self._info = info
@@ -226,11 +226,10 @@ class CollectPanel(QWidget):
     def _on_disconnect(self) -> None:
         if self._instrument is None:
             return
-        worker = CallWorker(self._instrument.disconnect)
+        worker = CallWorker(self._locked(self._instrument.disconnect))
         worker.succeeded.connect(lambda *_: self._on_disconnected())
         worker.failed.connect(lambda msg: (self._on_disconnected(), self._report_error("Disconnect", msg)))
-        self._keep_worker(worker)
-        worker.start()
+        start_worker(worker)
 
     def _on_disconnected(self) -> None:
         self._instrument = None
@@ -246,11 +245,10 @@ class CollectPanel(QWidget):
     def _on_diagnostics(self) -> None:
         if self._instrument is None:
             return
-        worker = CallWorker(self._instrument.diagnostics)
+        worker = CallWorker(self._locked(self._instrument.diagnostics))
         worker.succeeded.connect(self._show_diagnostics)
         worker.failed.connect(lambda msg: self._report_error("Diagnostics", msg))
-        self._keep_worker(worker)
-        worker.start()
+        start_worker(worker)
 
     def _show_diagnostics(self, report) -> None:
         lines = [f"Overall: {'OK' if report.ok else 'PROBLEM'}", ""]
@@ -277,13 +275,13 @@ class CollectPanel(QWidget):
         self.progress_bar.setValue(0)
         self._set_busy(True)
 
-        worker = CollectWorker(self._instrument, params)
+        worker = CollectWorker(self._instrument, params, lock=self._instrument_lock)
+        self._worker = worker
         worker.progress.connect(self._on_progress)
         worker.succeeded.connect(self._on_collect_succeeded)
         worker.cancelled.connect(self._on_collect_cancelled)
         worker.failed.connect(self._on_collect_failed)
-        self._keep_worker(worker)
-        worker.start()
+        start_worker(worker)
 
     def _on_progress(self, done: int, total: int) -> None:
         self.progress_bar.setRange(0, max(total, 1))
@@ -353,10 +351,16 @@ class CollectPanel(QWidget):
 
     # -- helpers ------------------------------------------------------------------------
 
-    def _keep_worker(self, worker) -> None:
-        # Hold a reference so PySide doesn't garbage-collect a running QThread,
-        # and so Cancel can find it.
-        self._worker = worker
+    def _locked(self, fn):
+        """Wrap an instrument call so only one runs at a time.
+
+        Drivers are not required to be thread-safe, and workers for e.g.
+        set_sample and a collection could otherwise overlap.
+        """
+        def call(*args, **kwargs):
+            with self._instrument_lock:
+                return fn(*args, **kwargs)
+        return call
 
     def _report_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
