@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OpenFTIR
+Comment=FTIR Spectrometer Control and Spectral Analysis
+Exec=openftir-gui
+Icon=openftir
+Categories=Science;
+Terminal=false
