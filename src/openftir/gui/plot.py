@@ -95,7 +95,9 @@ class SpectrumPlotWidget(QWidget):
         self.plot_item: pg.PlotItem = self.plot_widget.getPlotItem()
         self.plot_item.showGrid(x=True, y=True, alpha=0.25)
         self.plot_item.invertX(True)  # IR convention: high wavenumber on the left
-        self.plot_item.addLegend(offset=(10, 10))
+        self.plot_item.addLegend(
+            offset=(10, 10), labelTextColor=(30, 30, 30), brush=(255, 255, 255, 220), pen=(190, 190, 190)
+        )
         self.plot_item.setLabel("bottom", "Wavenumber", units="cm⁻¹")
         self.plot_item.setLabel("left", "Absorbance")
         layout.addWidget(self.plot_widget)

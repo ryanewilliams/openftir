@@ -34,7 +34,10 @@ def test_main_window_opens(qtbot):
     assert window.model.rowCount() == 0
 
     dock_names = {d.objectName() for d in window.findChildren(QDockWidget)}
-    assert {"spectraDock", "detailsDock", "peaksDock", "collectDock", "libraryDock"} <= dock_names
+    assert {"spectraDock", "collectDock", "libraryDock"} <= dock_names
+    # Peaks and Details live in tabs under the plot, not in docks.
+    tabs = window._central.tabs
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Peaks", "Details"]
 
     assert window.menuBar().findChild(object, None) is not None  # menu bar populated
     menu_titles = {a.text().replace("&", "") for a in window.menuBar().actions()}
@@ -123,6 +126,7 @@ def test_window_restores_saved_geometry_when_it_fits(qtbot, monkeypatch):
     settings.setValue("windowGeometry", b"saved-geometry")
 
     restored = QRect(available.x() + 5, available.y() + 5, 900, 1200)
+    settings.setValue("windowRect", restored)
 
     def fake_restore_geometry(self, _data):
         self.setGeometry(restored)
@@ -136,6 +140,7 @@ def test_window_restores_saved_geometry_when_it_fits(qtbot, monkeypatch):
         assert window.height() == restored.height()
     finally:
         settings.remove("windowGeometry")
+        settings.remove("windowRect")
 
 
 def test_window_ignores_saved_geometry_that_no_longer_fits(qtbot):
@@ -145,6 +150,7 @@ def test_window_ignores_saved_geometry_that_no_longer_fits(qtbot):
         qtbot.addWidget(probe)
         probe.setGeometry(200_000, 200_000, 400, 300)  # nowhere near any real screen
         settings.setValue("windowGeometry", probe.saveGeometry())
+        settings.setValue("windowRect", probe.frameGeometry())
 
         window = MainWindow()
         qtbot.addWidget(window)
@@ -153,6 +159,7 @@ def test_window_ignores_saved_geometry_that_no_longer_fits(qtbot):
         assert window.width() == expected_w
     finally:
         settings.remove("windowGeometry")
+        settings.remove("windowRect")
 
 
 def test_apply_light_theme_forces_light_palette_even_over_a_dark_one(qtbot):
@@ -165,3 +172,16 @@ def test_apply_light_theme_forces_light_palette_even_over_a_dark_one(qtbot):
 
     window_color = app.palette().color(QPalette.ColorRole.Window)
     assert window_color.lightness() > 200
+
+
+def test_plot_sits_at_top_of_central_area(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1400, 900)
+    window.show()
+    qtbot.wait(50)
+    container = window._central.plot_container
+    assert container.y() == 0
+    assert window.plot.y() == 0
+    # The tabs below take the remaining space instead of empty bands.
+    assert window._central.tabs.y() >= container.height()

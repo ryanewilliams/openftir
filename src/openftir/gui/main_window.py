@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QRect, QSettings, Qt
+from PySide6.QtCore import QRect, QSettings, QSize, Qt
 from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QToolBar,
+    QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -64,12 +66,10 @@ def _io_module():
 
 
 class _PlotAspectContainer(QWidget):
-    """Keeps the spectrum plot at a 16:9 aspect ratio, centred in the
-    central area, instead of stretching to fill whatever odd shape the
-    docks leave around it -- a very wide-short or tall-narrow plot is
-    harder to read. Sized/positioned manually in ``resizeEvent`` so it
-    still behaves (shrinks proportionally, no overlap) at small window
-    sizes."""
+    """Holds the spectrum plot at a fixed 16:9 aspect ratio: its height
+    follows its width, so the plot never turns into a tall or squashed
+    shape whatever space the docks leave. Width shrinks if the height
+    available would otherwise be exceeded."""
 
     _ASPECT = 16 / 9
 
@@ -77,22 +77,51 @@ class _PlotAspectContainer(QWidget):
         super().__init__(parent)
         plot_widget.setParent(self)
         self._plot_widget = plot_widget
-        self._layout_plot()
+        sp = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+        self.setMinimumSize(320, 180)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return int(round(width / self._ASPECT))
+
+    def sizeHint(self):
+        return QSize(960, 540)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._layout_plot()
-
-    def _layout_plot(self) -> None:
         w, h = self.width(), self.height()
-        if w <= 0 or h <= 0:
-            return
         plot_w, plot_h = float(w), w / self._ASPECT
         if plot_h > h:
             plot_w, plot_h = h * self._ASPECT, float(h)
-        x = int((w - plot_w) / 2)
-        y = int((h - plot_h) / 2)
-        self._plot_widget.setGeometry(x, y, int(plot_w), int(plot_h))
+        self._plot_widget.setGeometry(int((w - plot_w) / 2), 0, int(plot_w), int(plot_h))
+
+
+class _CentralArea(QWidget):
+    """Plot at the top (16:9), Peaks/Details tabs filling the space below."""
+
+    def __init__(self, plot_widget: QWidget, peaks_panel: QWidget, details_panel: QWidget, parent=None):
+        super().__init__(parent)
+        self.plot_container = _PlotAspectContainer(plot_widget, self)
+        self.tabs = QTabWidget(self)
+        self.tabs.addTab(peaks_panel, "Peaks")
+        self.tabs.addTab(details_panel, "Details")
+        self.tabs.setMinimumHeight(120)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.plot_container, 0)
+        layout.addWidget(self.tabs, 1)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Height-for-width isn't honoured by QVBoxLayout on its own; give the
+        # plot exactly 9/16 of the width, but never squeeze the tabs below
+        # their minimum.
+        max_plot_h = max(self.height() - self.tabs.minimumHeight(), 180)
+        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
 
 
 class MainWindow(QMainWindow):
@@ -110,12 +139,12 @@ class MainWindow(QMainWindow):
 
         self.plot = SpectrumPlotWidget(self)
         self.plot.cursor_moved.connect(self._on_cursor_moved)
-        self._central = _PlotAspectContainer(self.plot, self)
+        self.details_panel = DetailsPanel()
+        self.peaks_panel = PeaksPanel()
+        self._central = _CentralArea(self.plot, self.peaks_panel, self.details_panel, self)
         self.setCentralWidget(self._central)
 
         self._build_list_dock()
-        self._build_details_dock()
-        self._build_peaks_dock()
         self._build_collect_dock()
         self._build_library_dock()
         self._build_toolbar()
@@ -156,21 +185,6 @@ class MainWindow(QMainWindow):
 
         dock.setWidget(container)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
-
-    def _build_details_dock(self) -> None:
-        dock = QDockWidget("Details", self)
-        dock.setObjectName("detailsDock")
-        self.details_panel = DetailsPanel()
-        dock.setWidget(self.details_panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
-
-    def _build_peaks_dock(self) -> None:
-        dock = QDockWidget("Peaks", self)
-        dock.setObjectName("peaksDock")
-        self.peaks_panel = PeaksPanel()
-        dock.setWidget(self.peaks_panel)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
-        self.tabifyDockWidget(self.findChild(QDockWidget, "detailsDock"), dock)
 
     def _build_collect_dock(self) -> None:
         dock = QDockWidget("Collect", self)
@@ -649,8 +663,18 @@ class MainWindow(QMainWindow):
         screen = self.screen() or QGuiApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
 
+        # restoreGeometry() silently moves an off-screen window back on
+        # screen, so decide from the rectangle we saved ourselves whether the
+        # previous geometry still fits (e.g. an external monitor is gone).
         saved = self.settings.value("windowGeometry")
-        if saved and self.restoreGeometry(saved) and available.contains(self.frameGeometry()):
+        saved_rect = self.settings.value("windowRect")
+        if (
+            saved
+            and isinstance(saved_rect, QRect)
+            and available.contains(saved_rect)
+            and self.restoreGeometry(saved)
+            and available.contains(self.frameGeometry())
+        ):
             return
 
         width = max(1, int(available.width() * 0.9))
@@ -661,4 +685,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.settings.setValue("windowGeometry", self.saveGeometry())
+        self.settings.setValue("windowRect", self.frameGeometry())
         super().closeEvent(event)
