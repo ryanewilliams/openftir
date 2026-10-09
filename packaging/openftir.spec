@@ -29,12 +29,16 @@ hidden += ["usb.backend.libusb1", "libusb_package"]
 
 libusb_binaries = collect_dynamic_libs("libusb_package")
 libusb_datas = collect_data_files("libusb_package")
+# Package data such as the window icon (src/openftir/gui/resources/).
+openftir_datas = collect_data_files("openftir")
+# PyInstaller converts this PNG to .ico (Windows) / .icns (macOS); needs Pillow.
+ICON = os.path.join(HERE, "icons", "openftir.png")
 
 common = dict(
     pathex=[os.path.join(HERE, "..", "src")],
     hiddenimports=hidden,
     binaries=libusb_binaries,
-    datas=libusb_datas,
+    datas=libusb_datas + openftir_datas,
     excludes=["tkinter", "matplotlib", "IPython", "pytest"],
     noarchive=False,
 )
@@ -52,6 +56,7 @@ gui_exe = EXE(  # noqa: F821
     exclude_binaries=True,
     name="OpenFTIR",
     console=False,
+    icon=ICON,
     upx=False,
     argv_emulation=False,
 )
@@ -63,6 +68,7 @@ cli_exe = EXE(  # noqa: F821
     exclude_binaries=True,
     name="openftir-cli",
     console=True,
+    icon=ICON,
     upx=False,
 )
 
@@ -79,7 +85,7 @@ if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821
         coll,
         name="OpenFTIR.app",
-        icon=None,
+        icon=ICON,
         bundle_identifier="org.openftir.OpenFTIR",
         info_plist={
             "CFBundleName": "OpenFTIR",

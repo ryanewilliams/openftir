@@ -8,9 +8,10 @@ every instrument-dependent control disabled until the user connects one.
 from __future__ import annotations
 
 import sys
+from importlib.resources import files
 
 from PySide6.QtCore import QCoreApplication
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
 from openftir.gui.main_window import MainWindow
@@ -49,12 +50,19 @@ def apply_light_theme(app: QApplication) -> None:
     app.setPalette(_light_palette())
 
 
+def app_icon() -> QIcon:
+    """The OpenFTIR logo (packaging/icons/openftir.svg rendered to PNG)."""
+    return QIcon(str(files("openftir.gui") / "resources" / "openftir.png"))
+
+
 def main() -> int:
     QCoreApplication.setOrganizationName("OpenFTIR")
     QCoreApplication.setApplicationName("OpenFTIR")
 
     app = QApplication.instance() or QApplication(sys.argv)
     apply_light_theme(app)
+    app.setWindowIcon(app_icon())
+    app.setDesktopFileName("openftir")
     window = MainWindow()
     window.show()
     code = app.exec()

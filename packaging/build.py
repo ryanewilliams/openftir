@@ -59,7 +59,7 @@ def main() -> int:
         python = venv_python(venv_dir)
 
     run(python, "-m", "pip", "install", "--upgrade", "pip")
-    run(python, "-m", "pip", "install", ".[gui]", "pyinstaller>=6.3")
+    run(python, "-m", "pip", "install", ".[gui]", "pyinstaller>=6.3", "pillow")  # pillow: icon conversion
 
     shutil.rmtree(DIST, ignore_errors=True)
     shutil.rmtree(WORK, ignore_errors=True)
