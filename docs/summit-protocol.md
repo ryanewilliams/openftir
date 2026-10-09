@@ -44,7 +44,7 @@ Configuration keys (`...Cfg`) return `<min>/<max>/<step>` or
 |---|---|---|
 | `benchModel` | 142 | |
 | `firmVer` | 1.18 | |
-| `laserFreq` | 11685.125977 | reference laser wavenumber in cm⁻¹ (~855.8 nm diode laser, *guess*); sets the FFT x-axis instead of HeNe 15798 |
+| `laserFreq` | 11685.125977 | reference laser wavenumber in cm⁻¹ (~855.8 nm diode laser); the data are sampled at **2 × laserFreq** (see "Wavenumber axis") |
 | `maxRes` | 0.5 | cm⁻¹ |
 | `fwdVel` / `fwdVelCfg` | 0.4747 | mirror velocity, only option |
 | `rtrVel` | 4 | retrace velocity |
