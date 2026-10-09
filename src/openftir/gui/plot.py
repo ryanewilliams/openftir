@@ -59,9 +59,9 @@ _PLOT_FG = "#202020"
 # Vertical gap between stacked traces, as a fraction of the tallest trace's span.
 _STACK_GAP_FRACTION = 1.15
 
-_SPECTRUM_PEN_WIDTH = 2.0
-_HIGHLIGHT_PEN_WIDTH = 3.0
-_OVERLAY_PEN_WIDTH = 1.5
+_SPECTRUM_PEN_WIDTH = 1.0
+_HIGHLIGHT_PEN_WIDTH = 1.5
+_OVERLAY_PEN_WIDTH = 1.0
 
 
 def _cosmetic_pen(*args, **kwargs):

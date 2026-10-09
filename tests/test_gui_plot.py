@@ -9,7 +9,12 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QColor
 
-from openftir.gui.plot import SpectrumPlotWidget
+from openftir.gui.plot import (
+    _HIGHLIGHT_PEN_WIDTH,
+    _OVERLAY_PEN_WIDTH,
+    _SPECTRUM_PEN_WIDTH,
+    SpectrumPlotWidget,
+)
 from openftir.gui.spectrum_list import SpectrumEntry
 from openftir.spectrum import Spectrum, XUnit, YUnit
 
@@ -96,8 +101,8 @@ def test_spectrum_pen_widths_default_and_highlighted(qtbot):
     plot.refresh(entries, highlight_row=1)
 
     widths = [c.opts["pen"].widthF() for c in plot._curves]
-    assert widths[0] == 2.0
-    assert widths[1] == 3.0
+    assert widths[0] == _SPECTRUM_PEN_WIDTH
+    assert widths[1] == _HIGHLIGHT_PEN_WIDTH > _SPECTRUM_PEN_WIDTH
     assert all(c.opts["pen"].isCosmetic() for c in plot._curves)
 
 
@@ -109,12 +114,12 @@ def test_preview_and_baseline_pens_are_thin_dashed(qtbot):
 
     plot.show_live_preview(x, y, "preview", YUnit.SINGLE_BEAM)
     preview_pen = plot._preview_item.opts["pen"]
-    assert preview_pen.widthF() == 1.5
+    assert preview_pen.widthF() == _OVERLAY_PEN_WIDTH
     assert preview_pen.isCosmetic()
 
     plot.show_baseline_preview(x, y)
     baseline_pen = plot._baseline_item.opts["pen"]
-    assert baseline_pen.widthF() == 1.5
+    assert baseline_pen.widthF() == _OVERLAY_PEN_WIDTH
     assert baseline_pen.isCosmetic()
 
 
