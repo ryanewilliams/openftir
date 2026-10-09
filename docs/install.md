@@ -124,7 +124,10 @@ Switch to WinUSB (reversible):
 2. Download and run [Zadig](https://zadig.akeo.ie/).
 3. **Options → List All Devices**, select **Nicolet Summit** and check the
    USB ID shows `0EBB 000C`.
-4. Choose **WinUSB** as the target driver and click **Replace Driver**.
+4. Choose **WinUSB** as the target driver and click **Replace Driver**
+   (or **Install Driver** on a PC that never had Thermo's software; do not
+   use *Install WCID Driver*). If Windows asks to restart, do so: the switch
+   is not complete until you do, and OpenFTIR will report "access denied".
 5. In OpenFTIR, pick the **summit** driver in the Collect panel and connect.
 
 Switch back to Paradigm: Device Manager → right-click the Summit →

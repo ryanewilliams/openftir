@@ -81,7 +81,7 @@ class _FakeDevice:
 def test_not_found_on_windows_mentions_nicusbwdf():
     transport = UsbTransport(platform_name="Windows")
     usb_core = _FakeUsbCore(dev=None)
-    with pytest.raises(InstrumentError, match="NicUsbWdf"):
+    with pytest.raises(InstrumentError, match="WinUSB"):
         transport._open_with(usb_core, _FakeUsbUtil())
 
 
@@ -97,7 +97,7 @@ def test_not_found_on_macos_generic_message():
     usb_core = _FakeUsbCore(dev=None)
     with pytest.raises(InstrumentError) as exc_info:
         transport._open_with(usb_core, _FakeUsbUtil())
-    assert "NicUsbWdf" not in str(exc_info.value)
+    assert "WinUSB" not in str(exc_info.value)
 
 
 # -- find()/claim_interface() raising ------------------------------------------
@@ -106,7 +106,7 @@ def test_not_found_on_macos_generic_message():
 def test_find_error_on_windows_mentions_nicusbwdf():
     transport = UsbTransport(platform_name="Windows")
     usb_core = _FakeUsbCore(find_error=_FakeUSBError("Access denied"))
-    with pytest.raises(InstrumentError, match="NicUsbWdf"):
+    with pytest.raises(InstrumentError, match="WinUSB"):
         transport._open_with(usb_core, _FakeUsbUtil())
 
 
@@ -134,7 +134,7 @@ def test_claim_interface_error_on_windows_mentions_nicusbwdf():
         raise _FakeUSBError("could not open device")
 
     usb_util.claim_interface = _raise_claim
-    with pytest.raises(InstrumentError, match="NicUsbWdf"):
+    with pytest.raises(InstrumentError, match="WinUSB"):
         transport._open_with(usb_core, usb_util)
 
 

@@ -43,9 +43,12 @@ _USB_INTERFACE = 0
 _PACKET_SIZE = 512
 
 _WINDOWS_DRIVER_HINT = (
-    "The Summit is using Thermo's Windows driver (NicUsbWdf); OpenFTIR can "
-    "talk to it directly on macOS/Linux. On Windows see docs/install.md "
-    "(UsbDk / WinUSB)."
+    "OpenFTIR could not open the Summit. On Windows it needs the WinUSB "
+    "driver (one-time Zadig step, see docs/install.md). If you already "
+    "installed WinUSB: restart Windows if Zadig asked you to (the switch is "
+    "only complete after a reboot), replug the USB cable, and make sure "
+    "OMNIC Paradigm and any Thermo background services are closed: only one "
+    "program can use the instrument at a time."
 )
 _LINUX_PERMISSION_HINT = (
     "This usually means udev permissions aren't installed -- see "
