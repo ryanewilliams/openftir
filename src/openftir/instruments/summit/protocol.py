@@ -101,7 +101,14 @@ def parse_reply(xml_text: str, root_tag: str | None = None) -> ParsedReply:
     otherwise any root tag is accepted (``<reply>`` and ``<benchMsg>`` are
     both used by the protocol, see module docstring).
     """
-    xml_text = xml_text.strip()
+    # The Summit NUL-terminates every reply/event ("...</reply>\x00"), and a
+    # read may carry trailing padding; parse only up to the root's end tag.
+    xml_text = xml_text.replace("\x00", "").strip()
+    for end_tag in ("</reply>", "</benchMsg>"):
+        end = xml_text.find(end_tag)
+        if end != -1:
+            xml_text = xml_text[: end + len(end_tag)]
+            break
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as exc:

@@ -127,3 +127,12 @@ def test_parse_malformed_xml_raises_protocol_error():
 def test_parse_wrong_root_tag_raises():
     with pytest.raises(ProtocolError):
         parse_reply("<reply><a>1</a></reply>", root_tag="benchMsg")
+
+
+def test_parse_reply_accepts_nul_terminator_from_real_hardware():
+    # Exactly how a real Summit X terminated its connect reply.
+    reply = parse_reply("<reply><benchModel>142</benchModel><firmVer>1.18</firmVer></reply>\x00")
+    assert reply.get_int("benchModel") == 142
+    assert reply.get("firmVer") == "1.18"
+    event = parse_reply("<benchMsg><motorsDone>0</motorsDone></benchMsg>\x00\x00")
+    assert event.get_int("motorsDone") == 0

@@ -194,7 +194,8 @@ class FakeSummitTransport:
         parts: list[str] = []
         for key in keys:
             parts.append(self._get_value_xml(key))
-        return f"<reply>{''.join(parts)}</reply>"
+        # Real replies are NUL-terminated (seen on hardware).
+        return f"<reply>{''.join(parts)}</reply>\x00"
 
     def _get_value_xml(self, key: str) -> str:
         if key in _LIST_CFG:
@@ -230,7 +231,8 @@ class FakeSummitTransport:
             parts.append(f"<{key}>{value}</{key}>")
             if key == "collectState":
                 self._on_collect_state(value)
-        return f"<reply>{''.join(parts)}</reply>"
+        # Real replies are NUL-terminated (seen on hardware).
+        return f"<reply>{''.join(parts)}</reply>\x00"
 
     def _on_collect_state(self, value: str) -> None:
         state = int(float(value))
