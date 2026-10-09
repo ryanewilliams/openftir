@@ -110,23 +110,34 @@ Most libusb-based instruments work without additional setup on macOS. If your in
 
 ### Windows
 
-1. **Check if your instrument is recognized**:
-   - Open Device Manager (devmgmt.msc)
-   - Look for your instrument under "Universal Serial Bus devices" or "Other devices"
+#### Nicolet Summit
 
-2. **If the device appears as "Unknown Device" or shows an error**:
-   - Install WinUSB driver using [Zadig](https://zadig.akeo.ie/):
-     1. Download and run Zadig
-     2. Connect your instrument
-     3. Select your device from the list
-     4. Choose "WinUSB" from the driver dropdown
-     5. Click "Replace Driver"
-   - This is **only necessary** if your instrument's driver requires libusb
+On Windows the Summit is normally bound to Thermo's own kernel driver
+(`NicUsbWdf`, installed with OMNIC Paradigm). That driver stays attached
+whether or not Paradigm is running, so **closing Paradigm is not enough**:
+OpenFTIR (libusb) cannot open the device until it uses the generic WinUSB
+driver instead. macOS and Linux need none of this.
 
-3. **Test**:
-   ```bash
-   openftir-gui  # Should auto-detect your instrument
-   ```
+Switch to WinUSB (reversible):
+
+1. Quit OMNIC Paradigm.
+2. Download and run [Zadig](https://zadig.akeo.ie/).
+3. **Options → List All Devices**, select **Nicolet Summit** and check the
+   USB ID shows `0EBB 000C`.
+4. Choose **WinUSB** as the target driver and click **Replace Driver**.
+5. In OpenFTIR, pick the **summit** driver in the Collect panel and connect.
+
+Switch back to Paradigm: Device Manager → right-click the Summit →
+Properties → Driver → **Roll Back Driver** (or *Update driver → Browse →
+Let me pick* and choose the Thermo Fisher Scientific driver). Paradigm will
+not see the instrument while WinUSB is installed, and OpenFTIR will not see
+it while Thermo's driver is installed.
+
+#### Other instruments
+
+Only replace a driver with WinUSB (via Zadig as above) if the OpenFTIR driver
+for that instrument is libusb-based and the device shows up as "Unknown
+Device" or is bound to a vendor driver.
 
 ## Fallback: Running Vendor Software in a Virtual Machine
 
