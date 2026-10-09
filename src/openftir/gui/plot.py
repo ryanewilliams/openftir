@@ -69,7 +69,9 @@ _AUTO_LABEL_FONT_PT = 8
 _AUTO_LABEL_MARKER_SIZE = 5
 #: how far (as a fraction of the visible y span) a label is nudged away from
 #: its dip/peak -- below a %T dip, above an absorbance peak.
-_AUTO_LABEL_Y_OFFSET_FRACTION = 0.05
+_AUTO_LABEL_Y_OFFSET_FRACTION = 0.012
+#: extra room kept below the lowest dip (above the highest peak) for labels
+_AUTO_LABEL_HEADROOM_FRACTION = 0.07
 #: minimum x separation (as a fraction of the visible x span) between two
 #: placed labels -- the "simple greedy" overlap avoidance. Two labels only
 #: count as conflicting if they are close in BOTH x and y (see
@@ -124,7 +126,7 @@ class SpectrumPlotWidget(QWidget):
         self.plot_item.showGrid(x=True, y=True, alpha=0.25)
         self.plot_item.invertX(True)  # IR convention: high wavenumber on the left
         self.plot_item.addLegend(
-            offset=(10, 10), labelTextColor=(30, 30, 30), brush=(255, 255, 255, 220), pen=(190, 190, 190)
+            offset=(-10, 10), labelTextColor=(30, 30, 30), brush=(255, 255, 255, 220), pen=(190, 190, 190)
         )
         self.plot_item.setLabel("bottom", "Wavenumber", units="cm⁻¹")
         self.plot_item.setLabel("left", "Absorbance")
@@ -274,9 +276,38 @@ class SpectrumPlotWidget(QWidget):
                 for p in peaks:
                     label_candidates.append((p.position, p.height + offset, down, entry.color))
 
+        if label_candidates:
+            self._reserve_label_headroom(visible, offsets, label_candidates)
         self.plot_item.vb.autoRange()
         if label_candidates:
             self._place_auto_labels(label_candidates)
+
+    def _reserve_label_headroom(self, visible, offsets, label_candidates) -> None:
+        """Extend the autoranged view below (for %T dips) or above (for
+        absorbance peaks) the data so labels under a dip that bottoms out
+        near the plot edge (e.g. a saturated band at 0 %T) aren't clipped.
+        Done with an invisible point that counts towards the bounds."""
+        ys = [
+            e.spectrum.y + (offsets[k] if self._stack_mode else 0.0)
+            for k, (_, e) in enumerate(visible)
+            if len(e.spectrum.y)
+        ]
+        if not ys:
+            return
+        y_min = min(float(np.nanmin(y)) for y in ys)
+        y_max = max(float(np.nanmax(y)) for y in ys)
+        pad = (y_max - y_min or 1.0) * _AUTO_LABEL_HEADROOM_FRACTION
+        x_mid = float(np.mean([c[0] for c in label_candidates]))
+        pts = []
+        if any(down for _, _, down, _ in label_candidates):
+            pts.append(y_min - pad)
+        if any(not down for _, _, down, _ in label_candidates):
+            pts.append(y_max + pad)
+        spacer = pg.ScatterPlotItem(
+            x=[x_mid] * len(pts), y=pts, size=1, brush=pg.mkBrush(0, 0, 0, 0), pen=pg.mkPen(None)
+        )
+        self.plot_item.addItem(spacer)  # deliberately NOT ignoreBounds
+        self._auto_label_items.append(spacer)
 
     # -- peak markers -------------------------------------------------------------
 
