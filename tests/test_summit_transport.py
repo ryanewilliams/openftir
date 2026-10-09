@@ -203,6 +203,29 @@ def test_read_data_reads_from_ep83():
     assert transport.read_data(512) == b"\x01\x02\x03"
 
 
+def test_read_data_timeout_returns_empty_but_other_errors_raise():
+    class _Timeout(_FakeUSBError):
+        pass
+
+    core = _FakeUsbCore(dev=_FakeDevice())
+    core.USBTimeoutError = _Timeout
+    transport = UsbTransport(platform_name="Darwin")
+    transport._open_with(core, _FakeUsbUtil())
+
+    def timeout_read(ep, size, timeout=None):
+        raise _Timeout("Operation timed out")
+
+    transport._dev.read = timeout_read
+    assert transport.read_data(512, timeout=0.01) == b""
+
+    def broken_read(ep, size, timeout=None):
+        raise _FakeUSBError("No such device (it may have been disconnected)")
+
+    transport._dev.read = broken_read
+    with pytest.raises(InstrumentError):
+        transport.read_data(512)
+
+
 def test_command_before_open_raises():
     transport = UsbTransport(platform_name="Darwin")
     with pytest.raises(InstrumentError, match="not open"):

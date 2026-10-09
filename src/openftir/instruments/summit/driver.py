@@ -78,7 +78,15 @@ _DIAG_CFG_KEYS = tuple(f"{key}Cfg" for key in _DIAG_KEYS)
 
 _MOTORS_DONE_TIMEOUT_S = 30.0
 _MOTORS_DONE_POLL_INTERVAL_S = 0.4
-_DATA_READ_TIMEOUT_S = 10.0
+_DATA_READ_TIMEOUT_S = 10.0   # give up after this long without scan data
+_DATA_POLL_S = 0.5            # single USB read timeout, so cancel stays responsive
+_DRAIN_TIMEOUT_S = 0.05
+_DRAIN_MAX_READS = 200
+
+
+def _collect_state(state: int) -> dict:
+    # Paradigm always sends the full state set when starting/stopping.
+    return {"stepScanState": 0, "collectState": state, "servoState": 1, "extTrigger": 0}
 _DATA_CHUNK_SIZE = 4096
 
 
@@ -274,21 +282,25 @@ class SummitInstrument(Instrument):
             self._send_scan_setup(peak_pos, sdp, gain)
             self._poll_motors_done(cancel)
 
-            self._transport.command(
-                build_set({"stepScanState": 0, "collectState": 0, "servoState": 1, "extTrigger": 0})
-            )
+            self._transport.command(build_set(_collect_state(0)))
+            self._drain_data()
             self._transport.command(build_set({"lightbar": 4}))
-            self._transport.command(build_set({"collectState": 1}))
             collecting = True
+            self._transport.command(build_set(_collect_state(1)))
 
             assembler = ScanAssembler()
             min_len = 2 * peak_pos
+            last_data = time.monotonic()
             while len(good_scans) < params.scans:
                 self._check_cancel(cancel)
-                chunk = self._transport.read_data(_DATA_CHUNK_SIZE, timeout=_DATA_READ_TIMEOUT_S)
+                chunk = self._transport.read_data(_DATA_CHUNK_SIZE, timeout=_DATA_POLL_S)
                 if not chunk:
-                    time.sleep(0.01)
+                    if time.monotonic() - last_data > _DATA_READ_TIMEOUT_S:
+                        raise InstrumentError(
+                            f"Summit: no scan data for {_DATA_READ_TIMEOUT_S:g} s after starting collection"
+                        )
                     continue
+                last_data = time.monotonic()
                 for scan_id, samples, _end_record in assembler.feed(chunk):
                     if samples.size < min_len:
                         continue  # too short -- drop per docs/summit-protocol.md
@@ -318,15 +330,23 @@ class SummitInstrument(Instrument):
 
     def _send_scan_setup(self, peak_pos: int, sdp: int, gain: int) -> None:
         # Mirrors Paradigm's setup exactly (docs/summit-protocol.md
-        # "Connection sequence", step 5): six separate `set`s, in this order.
+        # "Connection sequence", step 5): seven separate `set`s, in this order.
         self._transport.command(build_set({"sampleshuttle": 1}))
         self._transport.command(
             build_set({"ssp": 1, "fwdVel": 0.4747, "peakPos": peak_pos, "sdp": sdp, "detGain": gain})
         )
-        self._transport.command(build_set({"hpf": 20, "lpf": 11000}))
+        self._transport.command(build_set({"hpf": 20}))
+        self._transport.command(build_set({"lpf": 11000}))
         self._transport.command(build_set({"rtrVel": 4}))
         self._transport.command(build_set({"bsSlot": 0, "beampathId": 1, "sourceId": 2, "aperture": 100}))
         self._transport.command(build_set({"settleTime": 200, "bidirScan": 0}))
+
+    def _drain_data(self) -> None:
+        """Discard leftover EP 0x83 bytes, e.g. the tail of a scan that was
+        cut short when a previous collection stopped."""
+        for _ in range(_DRAIN_MAX_READS):
+            if not self._transport.read_data(_DATA_CHUNK_SIZE, timeout=_DRAIN_TIMEOUT_S):
+                return
 
     def _poll_motors_done(self, cancel: threading.Event | None) -> None:
         deadline = time.monotonic() + _MOTORS_DONE_TIMEOUT_S
@@ -342,7 +362,7 @@ class SummitInstrument(Instrument):
     def _stop_collection(self) -> None:
         # Always stop collection on the way out (cancel, error, or normal
         # completion) -- never leave the bench streaming/mid-scan.
-        for xml in (build_set({"collectState": 0}), build_set({"lightbar": 1})):
+        for xml in (build_set(_collect_state(0)), build_set({"lightbar": 1})):
             try:
                 self._transport.command(xml)
             except InstrumentError as exc:

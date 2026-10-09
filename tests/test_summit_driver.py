@@ -123,7 +123,8 @@ def _expected_collect_sequence(peak_pos=6154, sdp=12426, gain=1):
         "<cmd><set><sampleshuttle>1</sampleshuttle></set></cmd>",
         f"<cmd><set><ssp>1</ssp><fwdVel>0.4747</fwdVel><peakPos>{peak_pos}</peakPos>"
         f"<sdp>{sdp}</sdp><detGain>{gain}</detGain></set></cmd>",
-        "<cmd><set><hpf>20</hpf><lpf>11000</lpf></set></cmd>",
+        "<cmd><set><hpf>20</hpf></set></cmd>",
+        "<cmd><set><lpf>11000</lpf></set></cmd>",
         "<cmd><set><rtrVel>4</rtrVel></set></cmd>",
         "<cmd><set><bsSlot>0</bsSlot><beampathId>1</beampathId><sourceId>2</sourceId><aperture>100</aperture></set></cmd>",
         "<cmd><set><settleTime>200</settleTime><bidirScan>0</bidirScan></set></cmd>",
@@ -131,7 +132,8 @@ def _expected_collect_sequence(peak_pos=6154, sdp=12426, gain=1):
         "<cmd><set><stepScanState>0</stepScanState><collectState>0</collectState>"
         "<servoState>1</servoState><extTrigger>0</extTrigger></set></cmd>",
         "<cmd><set><lightbar>4</lightbar></set></cmd>",
-        "<cmd><set><collectState>1</collectState></set></cmd>",
+        "<cmd><set><stepScanState>0</stepScanState><collectState>1</collectState>"
+        "<servoState>1</servoState><extTrigger>0</extTrigger></set></cmd>",
     ]
 
 
@@ -146,7 +148,8 @@ def test_exact_command_sequence_matches_paradigm():
     expected_start = _expected_collect_sequence()
     assert transport.commands[: len(expected_start)] == expected_start
     assert transport.commands[-2:] == [
-        "<cmd><set><collectState>0</collectState></set></cmd>",
+        "<cmd><set><stepScanState>0</stepScanState><collectState>0</collectState>"
+        "<servoState>1</servoState><extTrigger>0</extTrigger></set></cmd>",
         "<cmd><set><lightbar>1</lightbar></set></cmd>",
     ]
     inst.disconnect()
@@ -204,7 +207,8 @@ def test_cancel_mid_collection_still_stops_collection():
         inst.collect_single_beam(CollectParams(scans=1000, resolution=4.0), cancel=cancel)
 
     assert transport.commands[-2:] == [
-        "<cmd><set><collectState>0</collectState></set></cmd>",
+        "<cmd><set><stepScanState>0</stepScanState><collectState>0</collectState>"
+        "<servoState>1</servoState><extTrigger>0</extTrigger></set></cmd>",
         "<cmd><set><lightbar>1</lightbar></set></cmd>",
     ]
     inst.disconnect()
@@ -250,7 +254,8 @@ def test_transport_error_mid_collection_still_stops_collection():
         inst.collect_single_beam(CollectParams(scans=1000, resolution=4.0))
 
     assert transport.commands[-2:] == [
-        "<cmd><set><collectState>0</collectState></set></cmd>",
+        "<cmd><set><stepScanState>0</stepScanState><collectState>0</collectState>"
+        "<servoState>1</servoState><extTrigger>0</extTrigger></set></cmd>",
         "<cmd><set><lightbar>1</lightbar></set></cmd>",
     ]
     inst.disconnect()
@@ -259,7 +264,9 @@ def test_transport_error_mid_collection_still_stops_collection():
 def test_stop_collection_is_attempted_even_if_collectstate_0_itself_fails():
     class _AlsoFailsToStop(_FailAfterReads):
         def command(self, xml, timeout=5.0):
-            if xml == "<cmd><set><collectState>0</collectState></set></cmd>":
+            if "<collectState>1</collectState>" in xml:
+                self._started = True
+            if "<collectState>0</collectState>" in xml and getattr(self, "_started", False):
                 raise InstrumentError("simulated: can't even stop")
             return super().command(xml, timeout=timeout)
 

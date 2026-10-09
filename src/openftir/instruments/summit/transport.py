@@ -67,7 +67,8 @@ class SummitTransport(Protocol):
         ...
 
     def read_data(self, size: int, timeout: float = 5.0) -> bytes:
-        """Read up to ``size`` bytes from the EP 0x83 interferogram stream."""
+        """Read up to ``size`` bytes from the EP 0x83 interferogram stream,
+        or ``b""`` if nothing arrived within ``timeout``."""
         ...
 
     def read_event(self, timeout: float = 0.1) -> str | None:
@@ -211,6 +212,11 @@ class UsbTransport:
         try:
             chunk = self._dev.read(EP_DATA_IN, size, timeout=int(timeout * 1000))
         except self._usb_core.USBError as exc:
+            # A timeout just means no data yet (e.g. between scans); the
+            # driver decides how long silence is acceptable.
+            timeout_error = getattr(self._usb_core, "USBTimeoutError", None)
+            if (timeout_error is not None and isinstance(exc, timeout_error)) or getattr(exc, "errno", None) in (110, 60, 10060):
+                return b""
             raise InstrumentError(f"USB read error on the data endpoint: {exc}") from exc
         return bytes(chunk)
 
