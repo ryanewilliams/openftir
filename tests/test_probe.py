@@ -170,8 +170,7 @@ def test_probe_dialog_run_completes(qtbot):
 
 
 def test_probe_dialog_save_report(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
-
+    from openftir.gui import file_dialogs
     from openftir.gui.dialogs.probe_dialog import ProbeDialog
 
     dialog = ProbeDialog()
@@ -180,10 +179,11 @@ def test_probe_dialog_save_report(qtbot, tmp_path, monkeypatch):
     dialog.run_btn.click()
     qtbot.waitUntil(lambda: dialog._report is not None, timeout=10000)
 
+    # probe_dialog now saves through the shared (non-native) file dialog
+    # helper -- see openftir.gui.file_dialogs -- instead of calling
+    # QFileDialog.getSaveFileName directly.
     save_path = tmp_path / "report.json"
-    monkeypatch.setattr(
-        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(save_path), ""))
-    )
+    monkeypatch.setattr(file_dialogs, "get_save_path", lambda *a, **k: str(save_path))
     dialog.save_btn.click()
 
     assert save_path.exists()

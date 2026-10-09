@@ -18,7 +18,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from openftir.gui import file_dialogs
 from openftir.gui.workers import CallWorker, start_worker
 
 _EXPLANATION = (
@@ -35,14 +35,6 @@ _EXPLANATION = (
     "For the clearest result, run it once with the spectrometer unplugged, then "
     "again with it plugged in and switched on, and compare the two reports."
 )
-
-
-def _default_save_dir() -> Path:
-    home = Path.home()
-    desktop = home / "Desktop"
-    if desktop.is_dir():
-        return desktop
-    return home
 
 
 def _summary_text(report: dict[str, Any]) -> str:
@@ -190,9 +182,9 @@ class ProbeDialog(QDialog):
         if self._report is None:
             return
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        default_path = _default_save_dir() / f"instrument_probe_{timestamp}.json"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Probe Report", str(default_path), "JSON (*.json);;All Files (*)"
+        default_name = f"instrument_probe_{timestamp}.json"
+        path = file_dialogs.get_save_path(
+            self, "Save Probe Report", default_name, "JSON (*.json);;All Files (*)"
         )
         if not path:
             return

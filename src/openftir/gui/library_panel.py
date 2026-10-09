@@ -7,7 +7,6 @@ from typing import Callable
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from openftir.gui import file_dialogs
 from openftir.processing import Match, SpectralLibrary, search
 from openftir.spectrum import Spectrum
 
@@ -78,7 +78,7 @@ class LibraryPanel(QWidget):
         self._search_btn.setEnabled(has_lib)
 
     def _on_open(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Open Spectral Library")
+        directory = file_dialogs.get_existing_directory(self, "Open Spectral Library")
         if not directory:
             return
         try:
@@ -87,7 +87,7 @@ class LibraryPanel(QWidget):
             QMessageBox.critical(self, "Open Library", f"Could not open library:\n{exc}")
 
     def _on_create(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Create Spectral Library")
+        directory = file_dialogs.get_existing_directory(self, "Create Spectral Library")
         if not directory:
             return
         try:

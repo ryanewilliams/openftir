@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QSettings, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -32,15 +32,25 @@ from openftir.instruments import registry
 from openftir.instruments.base import CollectParams, Instrument, InstrumentInfo
 from openftir.processing import ratio
 from openftir.spectrum import Spectrum, YUnit
+from openftir.gui import file_dialogs
 from openftir.gui.workers import CallWorker, CollectWorker, start_worker
 
 _BACKGROUND_WARN_AFTER = timedelta(minutes=60)
 _SIMULATED_SAMPLES = ["polystyrene", "water-vapour", "none"]
 _FORMATS = {"Absorbance": YUnit.ABSORBANCE, "%Transmittance": YUnit.TRANSMITTANCE}
+_DEFAULT_SCANS = 16
+
+
+def _io_module():
+    """Import ``openftir.io`` lazily, same caution as ``main_window``."""
+    import openftir.io as io_mod
+
+    return io_mod
 
 
 class CollectPanel(QWidget):
     #: a finished, background-ratioed sample spectrum plus its chosen name
+    #: (also used for a raw background single beam -- see _on_collect_succeeded)
     spectrum_collected = Signal(object, str)
     #: a raw single-beam result to show as a live preview (spectrum, label)
     preview_ready = Signal(object, str)
@@ -55,20 +65,21 @@ class CollectPanel(QWidget):
         self._worker = None  # current CollectWorker, so Cancel can reach it
         self._instrument_lock = threading.Lock()
         self._pending_mode: str | None = None
+        self._settings = QSettings("OpenFTIR", "OpenFTIR")
 
         layout = QVBoxLayout(self)
 
         # -- driver selection -------------------------------------------------
         driver_box = QGroupBox("Instrument")
-        driver_form = QFormLayout(driver_box)
+        self.driver_form = QFormLayout(driver_box)
         self.driver_combo = QComboBox()
         self._refresh_drivers()
-        driver_form.addRow("Driver:", self.driver_combo)
+        self.driver_form.addRow("Driver:", self.driver_combo)
 
         self.sim_sample_combo = QComboBox()
         self.sim_sample_combo.addItems(_SIMULATED_SAMPLES)
         self.sim_sample_combo.currentTextChanged.connect(self._on_sim_sample_changed)
-        driver_form.addRow("Simulated sample:", self.sim_sample_combo)
+        self.driver_form.addRow("Simulated sample:", self.sim_sample_combo)
 
         conn_row = QHBoxLayout()
         self.connect_btn = QPushButton("Connect")
@@ -78,15 +89,15 @@ class CollectPanel(QWidget):
         self.disconnect_btn.setEnabled(False)
         conn_row.addWidget(self.connect_btn)
         conn_row.addWidget(self.disconnect_btn)
-        driver_form.addRow(conn_row)
+        self.driver_form.addRow(conn_row)
 
         self.status_label = QLabel("Not connected")
-        driver_form.addRow(self.status_label)
+        self.driver_form.addRow(self.status_label)
 
         self.diagnostics_btn = QPushButton("Diagnostics...")
         self.diagnostics_btn.clicked.connect(self._on_diagnostics)
         self.diagnostics_btn.setEnabled(False)
-        driver_form.addRow(self.diagnostics_btn)
+        self.driver_form.addRow(self.diagnostics_btn)
         layout.addWidget(driver_box)
 
         # -- acquisition settings --------------------------------------------
@@ -94,7 +105,7 @@ class CollectPanel(QWidget):
         settings_form = QFormLayout(settings_box)
         self.scans_spin = QSpinBox()
         self.scans_spin.setRange(1, 10000)
-        self.scans_spin.setValue(16)
+        self.scans_spin.setValue(_DEFAULT_SCANS)
         settings_form.addRow("Scans:", self.scans_spin)
 
         self.resolution_combo = QComboBox()
@@ -123,8 +134,18 @@ class CollectPanel(QWidget):
         layout.addWidget(settings_box)
 
         # -- background age ----------------------------------------------------
+        bg_row = QHBoxLayout()
         self.bg_age_label = QLabel("No background collected")
-        layout.addWidget(self.bg_age_label)
+        bg_row.addWidget(self.bg_age_label, 1)
+        self.save_bg_btn = QPushButton("Save background...")
+        self.save_bg_btn.clicked.connect(self._on_save_background)
+        self.load_bg_btn = QPushButton("Load background...")
+        self.load_bg_btn.clicked.connect(self._on_load_background)
+        bg_row.addWidget(self.save_bg_btn)
+        bg_row.addWidget(self.load_bg_btn)
+        layout.addLayout(bg_row)
+        self._update_background_buttons()
+
         self._age_timer = QTimer(self)
         self._age_timer.setInterval(10_000)
         self._age_timer.timeout.connect(self._update_background_age)
@@ -163,8 +184,14 @@ class CollectPanel(QWidget):
             self.driver_combo.addItem(driver_id)
 
     def _on_driver_changed(self, *_args) -> None:
-        is_simulated = self.driver_combo.currentText() == "simulated"
+        driver_id = self.driver_combo.currentText()
+        is_simulated = driver_id == "simulated"
         self.sim_sample_combo.setVisible(is_simulated)
+        # Hide both the label and the combo (not just the combo) when the
+        # connected driver isn't "simulated" -- a dangling "Simulated
+        # sample:" label with no visible control next to it looked broken.
+        self.driver_form.setRowVisible(self.sim_sample_combo, is_simulated)
+        self._restore_driver_settings(driver_id)
 
     def _set_resolutions(self, resolutions: tuple[float, ...], default: float) -> None:
         self.resolution_combo.clear()
@@ -255,6 +282,58 @@ class CollectPanel(QWidget):
         lines += [f"{name}: {status}" for name, status in report.items.items()]
         QMessageBox.information(self, "Diagnostics", "\n".join(lines))
 
+    # -- per-driver settings memory ---------------------------------------------------
+
+    def _driver_settings_prefix(self, driver_id: str) -> str:
+        return f"collect/{driver_id}"
+
+    def _save_driver_settings(self, driver_id: str) -> None:
+        """Remember the acquisition settings actually used for ``driver_id``,
+        so switching drivers and back restores them (scans still defaults
+        to 16 for a driver that has never been used, see
+        ``_restore_driver_settings``)."""
+        prefix = self._driver_settings_prefix(driver_id)
+        s = self._settings
+        s.setValue(f"{prefix}/scans", self.scans_spin.value())
+        s.setValue(f"{prefix}/resolution", self.resolution_combo.currentData())
+        s.setValue(f"{prefix}/x_min", self.x_min_spin.value())
+        s.setValue(f"{prefix}/x_max", self.x_max_spin.value())
+        s.setValue(f"{prefix}/apodization", self.apodization_combo.currentText())
+        s.setValue(f"{prefix}/format", self.format_combo.currentText())
+
+    def _restore_driver_settings(self, driver_id: str) -> None:
+        prefix = self._driver_settings_prefix(driver_id)
+        s = self._settings
+
+        scans = s.value(f"{prefix}/scans", _DEFAULT_SCANS, type=int)
+        self.scans_spin.setValue(scans)
+
+        resolution = s.value(f"{prefix}/resolution", None)
+        if resolution is not None:
+            idx = self.resolution_combo.findData(float(resolution))
+            if idx >= 0:
+                self.resolution_combo.setCurrentIndex(idx)
+
+        x_min = s.value(f"{prefix}/x_min", None)
+        if x_min is not None:
+            self.x_min_spin.setValue(float(x_min))
+
+        x_max = s.value(f"{prefix}/x_max", None)
+        if x_max is not None:
+            self.x_max_spin.setValue(float(x_max))
+
+        apodization = s.value(f"{prefix}/apodization", "")
+        if apodization:
+            idx = self.apodization_combo.findText(apodization)
+            if idx >= 0:
+                self.apodization_combo.setCurrentIndex(idx)
+
+        fmt = s.value(f"{prefix}/format", "")
+        if fmt:
+            idx = self.format_combo.findText(fmt)
+            if idx >= 0:
+                self.format_combo.setCurrentIndex(idx)
+
     # -- collection ------------------------------------------------------------------
 
     def _build_params(self) -> CollectParams:
@@ -269,6 +348,7 @@ class CollectPanel(QWidget):
     def _start_collect(self, mode: str) -> None:
         if self._instrument is None:
             return
+        self._save_driver_settings(self.driver_combo.currentText())
         self._pending_mode = mode
         params = self._build_params()
         self.progress_bar.setRange(0, params.scans)
@@ -297,6 +377,11 @@ class CollectPanel(QWidget):
             self._background = spectrum
             self._background_time = datetime.now()
             self._update_background_age()
+            self._update_background_buttons()
+            # So the background is actually inspectable/saveable, not just a
+            # transient preview line: add it to the spectrum list too.
+            name = f"Background {self._background_time:%H:%M:%S}"
+            self.spectrum_collected.emit(spectrum, name)
             self.status_message.emit("Background collected")
             return
 
@@ -348,6 +433,71 @@ class CollectPanel(QWidget):
             self.bg_age_label.setStyleSheet("color: #d62728; font-weight: bold;")
         else:
             self.bg_age_label.setStyleSheet("")
+
+    # -- background save/load ---------------------------------------------------------
+
+    def _update_background_buttons(self) -> None:
+        self.save_bg_btn.setEnabled(self._background is not None)
+
+    def _background_write_filters(self, io_mod) -> dict:
+        """``io_mod.SUPPORTED_WRITE`` with ``.ofjson`` moved first, since
+        that's the lossless native format a background should default to."""
+        filters = dict(io_mod.SUPPORTED_WRITE)
+        ofjson_desc = filters.pop(".ofjson", "OpenFTIR native spectrum (JSON)")
+        return {".ofjson": ofjson_desc, **filters}
+
+    def _on_save_background(self) -> None:
+        if self._background is None:
+            return
+        try:
+            io_mod = _io_module()
+        except ImportError as exc:
+            self._report_error("Save Background", f"File I/O is not available yet:\n{exc}")
+            return
+
+        timestamp = self._background_time or datetime.now()
+        default_name = f"background_{timestamp:%Y%m%d_%H%M}.ofjson"
+        filter_str = file_dialogs.build_filter_string(
+            self._background_write_filters(io_mod), include_all_supported=False
+        )
+        path = file_dialogs.get_save_path(self, "Save Background", default_name, filter_str)
+        if not path:
+            return
+        try:
+            io_mod.save([self._background], path)
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Save Background", str(exc))
+            return
+        self.status_message.emit(f"Background saved to {path}")
+
+    def _on_load_background(self) -> None:
+        try:
+            io_mod = _io_module()
+        except ImportError as exc:
+            self._report_error("Load Background", f"File I/O is not available yet:\n{exc}")
+            return
+
+        filter_str = file_dialogs.build_filter_string(io_mod.SUPPORTED_READ)
+        paths = file_dialogs.get_open_paths(self, "Load Background", filter_str, multiple=False)
+        if not paths:
+            return
+        try:
+            spectra = io_mod.load(paths[0])
+        except Exception as exc:  # noqa: BLE001
+            self._report_error("Load Background", str(exc))
+            return
+        if not spectra:
+            self._report_error("Load Background", "That file contains no spectra.")
+            return
+
+        spectrum = spectra[0]
+        self._background = spectrum
+        self._background_time = spectrum.acquired or datetime.now()
+        self._update_background_age()
+        self._update_background_buttons()
+        name = f"Background {self._background_time:%H:%M:%S}"
+        self.spectrum_collected.emit(spectrum, name)
+        self.status_message.emit(f"Background loaded from {paths[0]}")
 
     # -- helpers ------------------------------------------------------------------------
 

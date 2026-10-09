@@ -5,8 +5,11 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QInputDialog
 
+from openftir.gui import file_dialogs
 from openftir.gui.collect_panel import CollectPanel
 from openftir.spectrum import YUnit
 
@@ -60,3 +63,120 @@ def test_cancel_stops_collection(qtbot):
 
     qtbot.waitUntil(lambda: "Collection cancelled" in messages, timeout=10000)
     assert panel._background is None
+
+
+def test_simulated_sample_row_hidden_for_non_simulated_driver(qtbot):
+    """The 'Simulated sample:' label + combo should only show up for the
+    'simulated' driver -- a dangling label with no visible control next to
+    it (as seen with the real 'summit' driver) looks broken."""
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    panel.show()  # isVisible() is only meaningful once the widget is shown
+
+    idx = panel.driver_combo.findText("summit")
+    assert idx >= 0, "summit driver should be registered"
+    panel.driver_combo.setCurrentIndex(idx)
+    assert panel.driver_form.isRowVisible(panel.sim_sample_combo) is False
+    assert panel.sim_sample_combo.isVisible() is False
+
+    idx = panel.driver_combo.findText("simulated")
+    panel.driver_combo.setCurrentIndex(idx)
+    assert panel.driver_form.isRowVisible(panel.sim_sample_combo) is True
+    assert panel.sim_sample_combo.isVisible() is True
+
+
+def test_background_is_added_to_spectrum_list_and_save_disabled_without_one(qtbot):
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    _connect_simulated(qtbot, panel)
+    panel.scans_spin.setValue(2)
+
+    assert panel.save_bg_btn.isEnabled() is False
+
+    collected = []
+    panel.spectrum_collected.connect(lambda s, n: collected.append((s, n)))
+
+    with qtbot.waitSignal(panel.preview_ready, timeout=10000):
+        panel.bg_btn.click()
+    qtbot.waitUntil(lambda: panel._background is not None, timeout=10000)
+
+    assert len(collected) == 1
+    spectrum, name = collected[0]
+    assert name.startswith("Background ")
+    assert spectrum is panel._background
+    assert panel.save_bg_btn.isEnabled() is True
+
+
+def test_save_and_load_background_round_trip(qtbot, tmp_path, monkeypatch):
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    _connect_simulated(qtbot, panel)
+    panel.scans_spin.setValue(2)
+
+    with qtbot.waitSignal(panel.preview_ready, timeout=10000):
+        panel.bg_btn.click()
+    qtbot.waitUntil(lambda: panel._background is not None, timeout=10000)
+
+    save_path = tmp_path / "bg.ofjson"
+    monkeypatch.setattr(file_dialogs, "get_save_path", lambda *a, **k: str(save_path))
+    panel._on_save_background()
+    assert save_path.exists()
+
+    panel2 = CollectPanel()
+    qtbot.addWidget(panel2)
+    loaded = []
+    panel2.spectrum_collected.connect(lambda s, n: loaded.append((s, n)))
+    monkeypatch.setattr(file_dialogs, "get_open_paths", lambda *a, **k: [str(save_path)])
+
+    panel2._on_load_background()
+
+    assert panel2._background is not None
+    assert panel2.save_bg_btn.isEnabled() is True
+    assert len(loaded) == 1
+    loaded_spectrum, loaded_name = loaded[0]
+    assert loaded_name.startswith("Background ")
+    assert len(loaded_spectrum) == len(panel._background)
+
+
+def test_default_scans_is_16_for_a_driver_never_used_before(qtbot):
+    settings = QSettings("OpenFTIR", "OpenFTIR")
+    settings.remove("collect/simulated")
+
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    idx = panel.driver_combo.findText("simulated")
+    panel.driver_combo.setCurrentIndex(idx)
+
+    assert panel.scans_spin.value() == 16
+
+
+def test_remembers_last_used_settings_per_driver(qtbot):
+    settings = QSettings("OpenFTIR", "OpenFTIR")
+    settings.remove("collect/simulated")
+
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    _connect_simulated(qtbot, panel)
+
+    panel.scans_spin.setValue(20)
+    panel.x_min_spin.setValue(650.0)
+    panel.x_max_spin.setValue(3900.0)
+    panel.apodization_combo.setCurrentText("boxcar")
+    panel.format_combo.setCurrentText("%Transmittance")
+
+    with qtbot.waitSignal(panel.preview_ready, timeout=10000):
+        panel.bg_btn.click()
+    qtbot.waitUntil(lambda: panel._background is not None, timeout=10000)
+
+    panel2 = CollectPanel()
+    qtbot.addWidget(panel2)
+    idx2 = panel2.driver_combo.findText("simulated")
+    panel2.driver_combo.setCurrentIndex(idx2)
+
+    assert panel2.scans_spin.value() == 20
+    assert panel2.x_min_spin.value() == pytest.approx(650.0)
+    assert panel2.x_max_spin.value() == pytest.approx(3900.0)
+    assert panel2.apodization_combo.currentText() == "boxcar"
+    assert panel2.format_combo.currentText() == "%Transmittance"
+
+    settings.remove("collect/simulated")

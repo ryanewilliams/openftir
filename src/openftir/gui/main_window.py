@@ -10,13 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtCore import QRect, QSettings, Qt
+from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
     QDockWidget,
-    QFileDialog,
     QInputDialog,
     QListView,
     QMainWindow,
@@ -30,11 +29,13 @@ from PySide6.QtWidgets import (
 
 from openftir import __version__, processing
 from openftir.spectrum import Spectrum, XUnit, YUnit
+from openftir.gui import file_dialogs
 from openftir.gui.collect_panel import CollectPanel
 from openftir.gui.details_panel import DetailsPanel
 from openftir.gui.dialogs import (
     AtrDialog,
     BaselineDialog,
+    CropDialog,
     DerivativeDialog,
     NormalizeDialog,
     PeaksDialog,
@@ -62,6 +63,38 @@ def _io_module():
     return io_mod
 
 
+class _PlotAspectContainer(QWidget):
+    """Keeps the spectrum plot at a 16:9 aspect ratio, centred in the
+    central area, instead of stretching to fill whatever odd shape the
+    docks leave around it -- a very wide-short or tall-narrow plot is
+    harder to read. Sized/positioned manually in ``resizeEvent`` so it
+    still behaves (shrinks proportionally, no overlap) at small window
+    sizes."""
+
+    _ASPECT = 16 / 9
+
+    def __init__(self, plot_widget: QWidget, parent=None):
+        super().__init__(parent)
+        plot_widget.setParent(self)
+        self._plot_widget = plot_widget
+        self._layout_plot()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._layout_plot()
+
+    def _layout_plot(self) -> None:
+        w, h = self.width(), self.height()
+        if w <= 0 or h <= 0:
+            return
+        plot_w, plot_h = float(w), w / self._ASPECT
+        if plot_h > h:
+            plot_w, plot_h = h * self._ASPECT, float(h)
+        x = int((w - plot_w) / 2)
+        y = int((h - plot_h) / 2)
+        self._plot_widget.setGeometry(x, y, int(plot_w), int(plot_h))
+
+
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,7 +110,8 @@ class MainWindow(QMainWindow):
 
         self.plot = SpectrumPlotWidget(self)
         self.plot.cursor_moved.connect(self._on_cursor_moved)
-        self.setCentralWidget(self.plot)
+        self._central = _PlotAspectContainer(self.plot, self)
+        self.setCentralWidget(self._central)
 
         self._build_list_dock()
         self._build_details_dock()
@@ -89,6 +123,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Ready")
         self._update_recent_files_menu()
+        self._apply_window_geometry()
 
     # -- docks ------------------------------------------------------------------------
 
@@ -163,10 +198,6 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("mainToolbar")
         self.addToolBar(toolbar)
 
-        full_scale_action = QAction("Full Scale", self)
-        full_scale_action.triggered.connect(self.plot.full_scale)
-        toolbar.addAction(full_scale_action)
-
         self.stack_action = QAction("Stack/Offset", self)
         self.stack_action.setCheckable(True)
         self.stack_action.toggled.connect(self._on_stack_toggled)
@@ -231,8 +262,8 @@ class MainWindow(QMainWindow):
 
         process_menu.addSeparator()
 
-        crop_action = QAction("Crop to Current View", self)
-        crop_action.triggered.connect(self._on_crop_to_view)
+        crop_action = QAction("Crop...", self)
+        crop_action.triggered.connect(self._on_crop)
         process_menu.addAction(crop_action)
 
         subtract_action = QAction("Subtract...", self)
@@ -327,17 +358,10 @@ class MainWindow(QMainWindow):
             filters = io_mod.SUPPORTED_READ
         except (ImportError, AttributeError):
             filters = {}
-        filter_str = self._build_filter_string(filters, "Open Spectra")
-        paths, _ = QFileDialog.getOpenFileNames(self, "Open Spectra", "", filter_str)
+        filter_str = file_dialogs.build_filter_string(filters)
+        paths = file_dialogs.get_open_paths(self, "Open Spectra", filter_str)
         if paths:
             self._open_paths(paths)
-
-    def _build_filter_string(self, filters: dict, _title: str) -> str:
-        if not filters:
-            return "All Files (*)"
-        parts = [f"{desc} (*{ext})" for ext, desc in filters.items()]
-        all_exts = " ".join(f"*{ext}" for ext in filters)
-        return f"All Supported ({all_exts});;" + ";;".join(parts) + ";;All Files (*)"
 
     def _open_paths(self, paths: list[str]) -> None:
         try:
@@ -379,19 +403,21 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save", f"File I/O is not available yet:\n{exc}")
             return
 
-        filter_str = self._build_filter_string(filters, "Save Spectrum")
-        path, _ = QFileDialog.getSaveFileName(self, "Save Spectrum As", "", filter_str)
+        entry = self.model.entry_at(row)
+        filter_str = file_dialogs.build_filter_string(filters, include_all_supported=False)
+        default_ext = next(iter(filters), "")
+        default_name = file_dialogs.sanitize_filename(entry.name) + default_ext
+        path = file_dialogs.get_save_path(self, "Save Spectrum As", default_name, filter_str)
         if not path:
             return
-        entry = self.model.entry_at(row)
         try:
             io_mod.save([entry.spectrum], path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Save", f"Could not save file:\n{exc}")
 
     def _on_export_plot(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Plot", "", "PNG Image (*.png);;SVG Image (*.svg)"
+        path = file_dialogs.get_save_path(
+            self, "Export Plot", "OpenFTIR plot.png", "PNG Image (*.png);;SVG Image (*.svg)"
         )
         if not path:
             return
@@ -506,9 +532,18 @@ class MainWindow(QMainWindow):
             params = dialog.params()
             self._apply(lambda s: processing.atr_correction(s, **params), "ATR corrected")
 
-    def _on_crop_to_view(self) -> None:
-        x_range, _y_range = self.plot.plot_item.vb.viewRange()
-        self._apply(lambda s: processing.crop(s, x_range[0], x_range[1]), "cropped")
+    def _on_crop(self) -> None:
+        row = self._current_row()
+        if row is None:
+            QMessageBox.information(self, "Crop", "Select a spectrum first.")
+            return
+        spectrum = self.model.entry_at(row).spectrum
+        x_min = float(np.min(spectrum.x)) if len(spectrum.x) else 0.0
+        x_max = float(np.max(spectrum.x)) if len(spectrum.x) else 1.0
+        dialog = CropDialog(x_min, x_max, self)
+        if dialog.exec():
+            params = dialog.params()
+            self._apply(lambda s: processing.crop(s, params["x_min"], params["x_max"]), "cropped")
 
     def _on_subtract(self) -> None:
         row = self._current_row()
@@ -595,8 +630,7 @@ class MainWindow(QMainWindow):
         self.list_view.setCurrentIndex(self.model.index(row))
 
     def _on_preview_ready(self, spectrum: Spectrum, label: str) -> None:
-        self.plot.show_live_preview(spectrum.x, spectrum.y, label)
-        self.plot.full_scale()
+        self.plot.show_live_preview(spectrum.x, spectrum.y, label, spectrum.y_unit)
 
     # -- library panel callbacks ------------------------------------------------------------
 
@@ -604,11 +638,27 @@ class MainWindow(QMainWindow):
         row = self.model.add(spectrum, name=f"{name} (library)")
         self.list_view.setCurrentIndex(self.model.index(row))
 
-    # -- palette changes --------------------------------------------------------------------
+    # -- window geometry ----------------------------------------------------------------
 
-    def changeEvent(self, event) -> None:
-        super().changeEvent(event)
-        from PySide6.QtCore import QEvent
+    def _apply_window_geometry(self) -> None:
+        """Fit the window to the screen's available area (90% of its width
+        and height, centred) rather than a fixed size that can run off the
+        bottom of the screen (e.g. under the macOS Dock). A previous
+        session's saved geometry is used instead if it still fits on the
+        current screen."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
 
-        if event.type() == QEvent.PaletteChange:
-            self.plot.apply_palette()
+        saved = self.settings.value("windowGeometry")
+        if saved and self.restoreGeometry(saved) and available.contains(self.frameGeometry()):
+            return
+
+        width = max(1, int(available.width() * 0.9))
+        height = max(1, int(available.height() * 0.9))
+        x = available.x() + (available.width() - width) // 2
+        y = available.y() + (available.height() - height) // 2
+        self.setGeometry(x, y, width, height)
+
+    def closeEvent(self, event) -> None:
+        self.settings.setValue("windowGeometry", self.saveGeometry())
+        super().closeEvent(event)

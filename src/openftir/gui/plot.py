@@ -1,8 +1,17 @@
 """The main spectrum plot: a pyqtgraph view with IR conventions baked in.
 
-Wavenumber axes are plotted high-to-low (left-to-right), the y axis label
-follows the active ``YUnit``, and the plot background/foreground follow the
-application palette so it looks native in both light and dark desktop themes.
+Wavenumber axes are plotted high-to-low (left-to-right), and the y axis
+label follows whichever spectra/preview trace are actually shown (see
+``_update_axis_labels``) rather than a fixed unit.
+
+Panning and zooming are intentionally disabled: spectroscopists compare
+whole traces, not a scrolled-around fragment of one, so the view always
+auto-ranges to show everything currently visible instead. The crosshair +
+x/y readout stay active.
+
+The plot is always a white background with dark axes/text -- OpenFTIR is a
+light-theme-only app (see ``openftir.gui.app.apply_light_theme``) and does
+not follow the OS palette.
 """
 
 from __future__ import annotations
@@ -12,11 +21,15 @@ from typing import Iterable
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from openftir.processing import Peak
 from openftir.spectrum import XUnit, YUnit
 from openftir.gui.spectrum_list import SpectrumEntry
+
+# Lines are now drawn thicker (see the _..._PEN_WIDTH constants below); turn
+# on antialiasing so they stay smooth rather than blocky.
+pg.setConfigOptions(antialias=True)
 
 _X_LABELS = {
     XUnit.WAVENUMBER: ("Wavenumber", "cm⁻¹"),
@@ -35,9 +48,27 @@ _Y_LABELS = {
     YUnit.INTERFEROGRAM: ("Intensity", "a.u."),
     YUnit.ARBITRARY: ("Intensity", "a.u."),
 }
+#: shown when the visible spectra/preview don't all share one y unit
+_MIXED_Y_LABEL = ("Intensity (mixed units)", "")
+
+# Fixed light-theme plot colours (never follow the OS palette -- see the
+# module docstring): white background, dark axes/text/crosshair.
+_PLOT_BG = "#ffffff"
+_PLOT_FG = "#202020"
 
 # Vertical gap between stacked traces, as a fraction of the tallest trace's span.
 _STACK_GAP_FRACTION = 1.15
+
+_SPECTRUM_PEN_WIDTH = 2.0
+_HIGHLIGHT_PEN_WIDTH = 3.0
+_OVERLAY_PEN_WIDTH = 1.5
+
+
+def _cosmetic_pen(*args, **kwargs):
+    """``pg.mkPen`` with cosmetic width (device pixels, never scaled)."""
+    pen = pg.mkPen(*args, **kwargs)
+    pen.setCosmetic(True)
+    return pen
 
 
 class SpectrumPlotWidget(QWidget):
@@ -53,7 +84,9 @@ class SpectrumPlotWidget(QWidget):
         self._peak_items: list[pg.GraphicsObject] = []
         self._baseline_item: pg.PlotDataItem | None = None
         self._preview_item: pg.PlotDataItem | None = None
+        self._preview_y_unit: YUnit | None = None
         self._highlight_row: int | None = None
+        self._entries: list[SpectrumEntry] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -67,6 +100,16 @@ class SpectrumPlotWidget(QWidget):
         self.plot_item.setLabel("left", "Absorbance")
         layout.addWidget(self.plot_widget)
 
+        # No pan/zoom: an accidentally-scrolled/zoomed view is confusing,
+        # not useful, for comparing whole spectra. The view always
+        # auto-ranges instead (see refresh()/show_live_preview()).
+        view_box = self.plot_item.getViewBox()
+        view_box.setMouseEnabled(x=False, y=False)
+        view_box.setMenuEnabled(False)
+        self.plot_item.setMenuEnabled(False)
+        self.plot_item.hideButtons()  # the "A" auto-range corner button
+        self.plot_item.enableAutoRange()
+
         self._vline = pg.InfiniteLine(angle=90, movable=False)
         self._hline = pg.InfiniteLine(angle=0, movable=False)
         self._vline.setVisible(False)
@@ -76,25 +119,23 @@ class SpectrumPlotWidget(QWidget):
 
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
 
-        self.apply_palette()
+        self._apply_fixed_colors()
 
     # -- appearance -----------------------------------------------------------
 
-    def apply_palette(self) -> None:
-        """Match the plot colours to the current application (light/dark) palette."""
-        palette = QApplication.palette()
-        bg = palette.color(palette.ColorRole.Base)
-        fg = palette.color(palette.ColorRole.Text)
-        self.plot_widget.setBackground(bg)
+    def _apply_fixed_colors(self) -> None:
+        """White background, dark axes/text -- fixed, regardless of the OS
+        theme (OpenFTIR is light-theme-only, see the module docstring)."""
+        self.plot_widget.setBackground(_PLOT_BG)
         for axis_name in ("bottom", "left"):
             axis = self.plot_item.getAxis(axis_name)
-            axis.setPen(pg.mkPen(fg))
-            axis.setTextPen(pg.mkPen(fg))
+            axis.setPen(pg.mkPen(_PLOT_FG))
+            axis.setTextPen(pg.mkPen(_PLOT_FG))
             # Spectroscopists expect raw cm-1/absorbance values, never an
             # auto-inserted k/M SI prefix on the axis label.
             axis.enableAutoSIPrefix(False)
-        self._vline.setPen(pg.mkPen(fg, style=Qt.DashLine))
-        self._hline.setPen(pg.mkPen(fg, style=Qt.DashLine))
+        self._vline.setPen(pg.mkPen(_PLOT_FG, style=Qt.DashLine))
+        self._hline.setPen(pg.mkPen(_PLOT_FG, style=Qt.DashLine))
 
     # -- crosshair --------------------------------------------------------------
 
@@ -121,28 +162,48 @@ class SpectrumPlotWidget(QWidget):
     def stack_mode(self) -> bool:
         return self._stack_mode
 
-    # -- drawing ------------------------------------------------------------------
+    # -- axis labels ----------------------------------------------------------
 
-    def _axis_labels(self, entries: list[SpectrumEntry]) -> None:
-        if not entries:
+    def _update_axis_labels(self) -> None:
+        """Recompute both axis labels from whatever is actually on screen:
+        the visible spectra, plus the live preview trace if one is shown.
+        Called on add/remove/visibility changes and on preview show/clear.
+        """
+        visible = [e for e in self._entries if e.visible]
+        basis = visible or self._entries
+        if basis:
+            x_unit = basis[0].spectrum.x_unit
+            x_name, x_units_str = _X_LABELS.get(x_unit, (x_unit.value, ""))
+            self.plot_item.setLabel("bottom", x_name, units=x_units_str)
+
+        units = {e.spectrum.y_unit for e in visible}
+        if self._preview_item is not None and self._preview_y_unit is not None:
+            units.add(self._preview_y_unit)
+        if not units and basis:
+            units = {basis[0].spectrum.y_unit}
+        if not units:
             return
-        s = entries[0].spectrum
-        x_name, x_unit = _X_LABELS.get(s.x_unit, (s.x_unit.value, ""))
-        y_name, y_unit = _Y_LABELS.get(s.y_unit, (s.y_unit.value, ""))
-        self.plot_item.setLabel("bottom", x_name, units=x_unit)
-        self.plot_item.setLabel("left", y_name, units=y_unit)
+
+        if len(units) == 1:
+            unit = next(iter(units))
+            y_name, y_units_str = _Y_LABELS.get(unit, (unit.value, ""))
+        else:
+            y_name, y_units_str = _MIXED_Y_LABEL
+        self.plot_item.setLabel("left", y_name, units=y_units_str)
+
+    # -- drawing ------------------------------------------------------------------
 
     def refresh(self, entries: Iterable[SpectrumEntry], highlight_row: int | None = None) -> None:
         """Redraw every visible entry. ``highlight_row`` thickens that trace."""
-        entries = list(entries)
+        self._entries = list(entries)
         self._highlight_row = highlight_row
         for curve in self._curves:
             self.plot_item.removeItem(curve)
         self._curves.clear()
         self.plot_item.legend.clear()
 
-        visible = [(i, e) for i, e in enumerate(entries) if e.visible]
-        self._axis_labels([e for _, e in visible] or entries)
+        visible = [(i, e) for i, e in enumerate(self._entries) if e.visible]
+        self._update_axis_labels()
 
         # Stack offsets: stack order follows list order, tallest span sets the gap.
         offsets = [0.0] * len(visible)
@@ -156,11 +217,18 @@ class SpectrumPlotWidget(QWidget):
 
         for k, (row, entry) in enumerate(visible):
             s = entry.spectrum
-            width = 2.5 if row == highlight_row else 1.3
-            pen = pg.mkPen(entry.color, width=width)
+            width = _HIGHLIGHT_PEN_WIDTH if row == highlight_row else _SPECTRUM_PEN_WIDTH
+            pen = _cosmetic_pen(entry.color, width=width)
             y = s.y + offsets[k] if self._stack_mode else s.y
-            curve = self.plot_item.plot(s.x, y, pen=pen, name=entry.name)
+            # autoDownsample keeps multi-thousand-point spectra smooth with
+            # antialiasing on. clipToView is deliberately not used here: it
+            # trips an AttributeError in this pyqtgraph/Qt bindings
+            # combination (PlotWidget.__getattr__ forwarding during
+            # itemChange looks up 'autoRangeEnabled' on the wrong object).
+            curve = self.plot_item.plot(s.x, y, pen=pen, name=entry.name, autoDownsample=True)
             self._curves.append(curve)
+
+        self.plot_item.vb.autoRange()
 
     # -- peak markers -------------------------------------------------------------
 
@@ -190,7 +258,7 @@ class SpectrumPlotWidget(QWidget):
 
     def show_baseline_preview(self, x: np.ndarray, y: np.ndarray) -> None:
         self.clear_baseline_preview()
-        pen = pg.mkPen("#2ca02c", width=1.5, style=Qt.DashLine)
+        pen = _cosmetic_pen("#2ca02c", width=_OVERLAY_PEN_WIDTH, style=Qt.DashLine)
         self._baseline_item = self.plot_item.plot(x, y, pen=pen, name="baseline preview")
 
     def clear_baseline_preview(self) -> None:
@@ -200,12 +268,19 @@ class SpectrumPlotWidget(QWidget):
 
     # -- live collect preview --------------------------------------------------------
 
-    def show_live_preview(self, x: np.ndarray, y: np.ndarray, label: str) -> None:
+    def show_live_preview(
+        self, x: np.ndarray, y: np.ndarray, label: str, y_unit: YUnit = YUnit.SINGLE_BEAM
+    ) -> None:
         self.clear_live_preview()
-        pen = pg.mkPen("#7f7f7f", width=1.5, style=Qt.DotLine)
+        pen = _cosmetic_pen("#7f7f7f", width=_OVERLAY_PEN_WIDTH, style=Qt.DotLine)
         self._preview_item = self.plot_item.plot(x, y, pen=pen, name=label)
+        self._preview_y_unit = y_unit
+        self._update_axis_labels()
+        self.plot_item.vb.autoRange()
 
     def clear_live_preview(self) -> None:
         if self._preview_item is not None:
             self.plot_item.removeItem(self._preview_item)
             self._preview_item = None
+        self._preview_y_unit = None
+        self._update_axis_labels()
