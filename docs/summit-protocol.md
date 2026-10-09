@@ -152,3 +152,34 @@ scans), then FFT with OpenFTIR (Happ–Genzel, Mertz, 2× laser), reproduces the
 - Format of the data on EP 0x83 (raw interferogram? co-added? int32/float32?).
 - How resolution maps to `sdp`/`peakPos` (compare 4 vs 8 cm⁻¹ captures).
 - Meaning of `ssp` (*guess: sample spacing / undersampling ratio*).
+
+## Driver status
+
+A real driver (`src/openftir/instruments/summit/`) implements everything
+above; registered as `"summit"` in the driver registry. It only ever sends
+the commands/values documented here (`peakPos`/`sdp` aside, which depend on
+resolution); it never sends a motor, `valWheelPos`, `i2cMsg` or mapping
+command.
+
+Two corrections found while building and validating it against real
+captures (`tests/test_summit_validation.py`, gated on `OPENFTIR_SUMMIT_DATA`
+since those captures embed the instrument's serial number):
+
+- The end-of-scan record's offset-8 "zero" field is **not** reliably zero
+  (real captures show varying nonzero values there -- still not decoded).
+  Only the offset-0 data/end-of-scan records rely on that field being zero
+  for validity checking.
+- Its payload is **not** a fixed 128 bytes -- a real 4-scan, 4 cm⁻¹ capture
+  showed 44/96/148/36-byte end-of-scan payloads across 4 consecutive scans.
+
+Validated end-to-end: co-adding `bg10_scan2..5` (background) and
+`s4_scan20..23` (sample) through the driver's (hardware-free) co-add+FFT
+path and ratioing reproduces OMNIC's saved `04.spa` to ~0.44 %T rms over
+650-3950 cm⁻¹, matching the number above. Feeding the real
+`6185ac80-04_sample_4scan_4cm.pcapng` capture's EP 0x83 bytes through
+`ScanAssembler` yields scans 20-23 with ZPD at index 6153-6154, as expected
+for `peakPos=6154`.
+
+Only 4 and 8 cm⁻¹ have a confirmed `peakPos`/`sdp` (the exact table above);
+other resolutions use the extrapolation formula and are marked unverified
+in `InstrumentInfo.extra["unverified_resolutions"]`.

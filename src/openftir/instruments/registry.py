@@ -24,6 +24,7 @@ ENTRY_POINT_GROUP = "openftir.drivers"
 # hardware-specific driver never prevents the app from starting.
 _BUILTIN: dict[str, str] = {
     "simulated": "openftir.instruments.simulated:SimulatedInstrument",
+    "summit": "openftir.instruments.summit:SummitInstrument",
 }
 
 

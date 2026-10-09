@@ -379,6 +379,13 @@ def test_summit_cancellation():
 
 Study `src/openftir/instruments/simulated.py` for a complete, working example.
 
+## Driver status
+
+| Driver | Status | Notes |
+|---|---|---|
+| `simulated` | Stable | No hardware; synthetic spectra for dev/tests. |
+| `summit` | Real hardware driver, protocol reverse-engineered from USB captures | See `docs/summit-protocol.md`. Talks to the bench directly over USB (pyusb + bundled libusb) on macOS/Linux; on Windows the instrument must first be switched off Thermo's `NicUsbWdf` driver (see `docs/install.md`). Package: `src/openftir/instruments/summit/`. Tested against an in-memory fake transport (`summit.fake.FakeSummitTransport`) plus an opt-in validation suite (`tests/test_summit_validation.py`, gated on `OPENFTIR_SUMMIT_DATA`) that replays real captures of the user's own Summit X and reproduces OMNIC's saved spectrum to ~0.44 %T rms. Only `4` and `8` cm⁻¹ resolutions have a confirmed `peakPos`/`sdp`; others use an unverified extrapolation (flagged in `InstrumentInfo.extra["unverified_resolutions"]`). |
+
 ## Questions?
 
 See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for discussion channels and issue reporting.
