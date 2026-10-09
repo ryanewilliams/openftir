@@ -17,11 +17,12 @@ Status legend: **confirmed** = seen in captures; *guess* = inferred, unverified.
   |---|---|---|---|
   | `0x01` OUT | bulk | 512 | commands |
   | `0x82` IN | bulk | 512 | replies |
-  | `0x83` IN | bulk | 512 | *guess: interferogram data (unused while idle)* |
+  | `0x83` IN | bulk | 512 | interferogram data stream (see below) |
   | `0x84` IN | interrupt (bInterval 4) | 512 | asynchronous `<benchMsg>` events |
 
-- Every message on 0x01/0x82/0x84 is **a uint32 little-endian byte length
-  followed by ASCII XML** (no terminator).
+- **Commands** on 0x01 are a uint32 little-endian byte length followed by
+  ASCII XML. **Replies** on 0x82 and events on 0x84 are bare XML with no
+  length prefix (confirmed in captures 03/04).
 - Request/response is strictly one command → one reply on 0x82.
 
 ## Message grammar (confirmed)
@@ -80,7 +81,72 @@ laserGainX/Y/R endplatePosX/Y endplatePhzX/Y`. `humidity` read 0.
 7. `get` live diagnostics (voltages, laser, temps, humidity), `driveVolt`,
    laser gains, endplate position/phase.
 
-## Open questions (need captures 03–06)
+## Collecting scans (confirmed, captures 03, 04, 06)
+
+1. Send the scan setup from step 5 above (`peakPos`/`sdp` depend on resolution).
+2. Poll `get motorsDone` until 1.
+3. `set stepScanState 0, collectState 0, servoState 1, extTrigger 0`
+   (stepScanState/extTrigger are notRecognized on this model).
+4. `set ... collectState 1 ...` → the instrument streams **every scan
+   individually** on EP 0x83. The PC co-adds. Paradigm also sets `lightbar 4`
+   while collecting and `lightbar 1` when idle.
+5. `set ... collectState 0 ...` to stop; the scan in progress is cut short and
+   must be discarded.
+
+Paradigm's background is a fixed 4 scans (+1 aborted). On close it sends
+nothing special; it just stops polling.
+
+### EP 0x83 data stream
+
+A byte stream (USB transfer boundaries are meaningless) of records, each a
+16-byte little-endian header followed by a payload:
+
+| Offset | Type | Meaning |
+|---|---|---|
+| 0 | uint32 | record type: `0x10000000` data, `0x90000000` end-of-scan |
+| 4 | uint16 | scan counter (global, increments per scan) |
+| 6 | uint16 | block index within the scan (0, 1, 2 …) |
+| 8 | uint32 | 0 |
+| 12 | uint32 | payload length in bytes |
+
+- Data payloads are **float32 LE** interferogram samples, usually 40 or 41
+  per block. A 4 cm⁻¹ scan is ~12 390–12 425 samples (≤ `sdp`).
+- The end-of-scan record has a 128-byte payload (not yet decoded).
+- The centre burst (ZPD) sits exactly at sample index `peakPos`.
+- The last few dozen samples of a scan are unreliable: trim symmetrically
+  around `peakPos` (2·peakPos samples) before the FFT.
+
+### Wavenumber axis
+
+The effective sampling wavenumber is **2 × laserFreq** (two samples per
+laser fringe): 23 370.25 cm⁻¹ on this unit. Verified on the atmospheric CO₂
+Q-branch (found at 668 cm⁻¹, true 667.4) and the H₂O bending band.
+
+### Resolution → scan length
+
+| Resolution | peakPos | sdp |
+|---|---|---|
+| 4 cm⁻¹ | 6154 | 12426 |
+| 8 cm⁻¹ | 3124 | 6367 |
+
+In both, `sdp = 2·peakPos + 118`; `peakPos ≈ 1.0372·(2·laserFreq / res) + 94`
+is a two-point fit, unverified for other resolutions.
+
+### Validation
+
+Decoding capture 04 (4 sample scans) and capture 03's first run (4 background
+scans), then FFT with OpenFTIR (Happ–Genzel, Mertz, 2× laser), reproduces the
+`%T` spectrum Paradigm saved to within **0.44 %T rms**.
+
+## Open questions
+
+- Content of the 128-byte end-of-scan record.
+- `peakPos`/`sdp` for resolutions other than 4 and 8 cm⁻¹ (needs captures).
+- What capture 03's second, 10-scan run was for (not used by Paradigm's
+  background).
+
+## Previously open questions (answered above)
+
 
 - Command that starts a scan, and how co-adds / scan count are requested.
 - Format of the data on EP 0x83 (raw interferogram? co-added? int32/float32?).
