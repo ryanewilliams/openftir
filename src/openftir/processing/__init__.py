@@ -30,7 +30,7 @@ from .fft import (
     single_beam_to_interferogram,
 )
 from .normalize import normalize
-from .peaks import Peak, find_peaks, peak_area
+from .peaks import Peak, auto_label_peaks, find_peaks, peak_area
 from .search import Match, SpectralLibrary, search
 from .smooth import derivative, moving_average, savgol
 
@@ -64,6 +64,7 @@ __all__ = [
     "Peak",
     "find_peaks",
     "peak_area",
+    "auto_label_peaks",
     # atr
     "atr_correction",
     # fft

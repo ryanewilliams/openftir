@@ -37,7 +37,14 @@ from openftir.gui.workers import CallWorker, CollectWorker, start_worker
 
 _BACKGROUND_WARN_AFTER = timedelta(minutes=60)
 _SIMULATED_SAMPLES = ["polystyrene", "water-vapour", "none"]
-_FORMATS = {"Absorbance": YUnit.ABSORBANCE, "%Transmittance": YUnit.TRANSMITTANCE}
+# %Transmittance listed first so it's the combo box's default selection --
+# ATR-FTIR users normally work in %T. See _restore_driver_settings: the
+# remembered-format setting key below was bumped to "format_v2" so that an
+# old install's saved "Absorbance" (which used to be the default, not
+# necessarily a deliberate choice) doesn't silently keep overriding the new
+# %T default; a value saved under the new key (a genuine post-change choice)
+# is still honoured.
+_FORMATS = {"%Transmittance": YUnit.TRANSMITTANCE, "Absorbance": YUnit.ABSORBANCE}
 _DEFAULT_SCANS = 16
 
 
@@ -299,7 +306,7 @@ class CollectPanel(QWidget):
         s.setValue(f"{prefix}/x_min", self.x_min_spin.value())
         s.setValue(f"{prefix}/x_max", self.x_max_spin.value())
         s.setValue(f"{prefix}/apodization", self.apodization_combo.currentText())
-        s.setValue(f"{prefix}/format", self.format_combo.currentText())
+        s.setValue(f"{prefix}/format_v2", self.format_combo.currentText())
 
     def _restore_driver_settings(self, driver_id: str) -> None:
         prefix = self._driver_settings_prefix(driver_id)
@@ -328,7 +335,11 @@ class CollectPanel(QWidget):
             if idx >= 0:
                 self.apodization_combo.setCurrentIndex(idx)
 
-        fmt = s.value(f"{prefix}/format", "")
+        # "format_v2", not "format": see the comment on _FORMATS above --
+        # this intentionally ignores any pre-this-change saved value, so a
+        # fresh install and an upgraded old install both land on the new
+        # %Transmittance default until the user actually picks a format.
+        fmt = s.value(f"{prefix}/format_v2", "")
         if fmt:
             idx = self.format_combo.findText(fmt)
             if idx >= 0:

@@ -138,6 +138,36 @@ def test_save_and_load_background_round_trip(qtbot, tmp_path, monkeypatch):
     assert len(loaded_spectrum) == len(panel._background)
 
 
+def test_default_final_format_is_percent_transmittance_on_fresh_settings(qtbot):
+    """ATR-FTIR users normally work in %T -- a never-used driver (or a
+    fresh install) should default to %Transmittance, not Absorbance."""
+    settings = QSettings("OpenFTIR", "OpenFTIR")
+    settings.remove("collect/simulated")
+
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    idx = panel.driver_combo.findText("simulated")
+    panel.driver_combo.setCurrentIndex(idx)
+
+    assert panel.format_combo.currentText() == "%Transmittance"
+
+
+def test_default_final_format_ignores_pre_change_stored_absorbance(qtbot):
+    """A value saved under the old 'format' settings key (from before %T
+    became the default) must not resurrect Absorbance as the default."""
+    settings = QSettings("OpenFTIR", "OpenFTIR")
+    settings.setValue("collect/simulated/format", "Absorbance")
+    settings.remove("collect/simulated/format_v2")
+
+    panel = CollectPanel()
+    qtbot.addWidget(panel)
+    idx = panel.driver_combo.findText("simulated")
+    panel.driver_combo.setCurrentIndex(idx)
+
+    assert panel.format_combo.currentText() == "%Transmittance"
+    settings.remove("collect/simulated/format")
+
+
 def test_default_scans_is_16_for_a_driver_never_used_before(qtbot):
     settings = QSettings("OpenFTIR", "OpenFTIR")
     settings.remove("collect/simulated")

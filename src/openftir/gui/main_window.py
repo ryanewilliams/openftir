@@ -40,6 +40,7 @@ from openftir.gui.dialogs import (
     CropDialog,
     DerivativeDialog,
     NormalizeDialog,
+    PeakLabelSettingsDialog,
     PeaksDialog,
     ProbeDialog,
     SmoothDialog,
@@ -131,11 +132,21 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.settings = QSettings("OpenFTIR", "OpenFTIR")
 
+        # Tracks whether the manual Peak Picking dialog's results are the
+        # ones currently shown in the Peaks table, so the auto-label
+        # refresh (see _refresh_peaks_panel) leaves them alone until the
+        # user moves on (new selection, or cancelling the dialog).
+        self._manual_peak_pick_active = False
+
         self.model = SpectrumListModel(self)
         self.model.dataChanged.connect(self._refresh_plot)
         self.model.rowsInserted.connect(self._refresh_plot)
         self.model.rowsRemoved.connect(self._refresh_plot)
         self.model.visibility_changed.connect(self._refresh_plot)
+        self.model.dataChanged.connect(self._refresh_peaks_panel)
+        self.model.rowsInserted.connect(self._refresh_peaks_panel)
+        self.model.rowsRemoved.connect(self._refresh_peaks_panel)
+        self.model.visibility_changed.connect(self._refresh_peaks_panel)
 
         self.plot = SpectrumPlotWidget(self)
         self.plot.cursor_moved.connect(self._on_cursor_moved)
@@ -294,6 +305,26 @@ class MainWindow(QMainWindow):
         peaks_action.triggered.connect(self._on_peak_picking)
         process_menu.addAction(peaks_action)
 
+        view_menu = self.menuBar().addMenu("&View")
+
+        self.auto_label_action = QAction("Auto-label peaks", self)
+        self.auto_label_action.setCheckable(True)
+        auto_label_default = bool(self.settings.value("view/autoLabelPeaks", True, type=bool))
+        self.auto_label_action.setChecked(auto_label_default)
+        self.auto_label_action.toggled.connect(self._on_auto_label_toggled)
+        view_menu.addAction(self.auto_label_action)
+
+        peak_label_settings_action = QAction("Peak labelling settings...", self)
+        peak_label_settings_action.triggered.connect(self._on_peak_label_settings)
+        view_menu.addAction(peak_label_settings_action)
+
+        # Sync the plot (constructed with its own built-in defaults, before
+        # this settings-backed action existed) to whatever was actually
+        # remembered -- setChecked() above fires no signal since toggled
+        # was connected afterwards.
+        self.plot.set_auto_label_enabled(auto_label_default)
+        self.plot.set_auto_label_params(**self._peak_label_params())
+
         help_menu = self.menuBar().addMenu("&Help")
 
         probe_action = QAction("Probe Instrument Connection...", self)
@@ -323,15 +354,71 @@ class MainWindow(QMainWindow):
         return entry.name, entry.spectrum
 
     def _on_selection_changed(self, current, _previous) -> None:
+        # A new selection invalidates any manual peak-pick result shown for
+        # the previous spectrum: drop its markers and let the Peaks table
+        # fall back to auto-labelling again.
+        self._manual_peak_pick_active = False
+        self.plot.clear_peaks()
         self._refresh_plot()
         if current.isValid():
             entry = self.model.entry_at(current.row())
             self.details_panel.show_spectrum(entry.name, entry.spectrum)
         else:
             self.details_panel.clear()
+        self._refresh_peaks_panel()
 
     def _refresh_plot(self, *_args) -> None:
         self.plot.refresh(self.model.entries(), highlight_row=self._current_row())
+
+    # -- auto peak labelling --------------------------------------------------------------
+
+    def _peak_label_params(self) -> dict:
+        return {
+            "max_transmittance": float(self.settings.value("peakLabel/maxTransmittance", 85.0, type=float)),
+            "min_wavenumber": float(self.settings.value("peakLabel/minWavenumber", 1500.0, type=float)),
+            "min_prominence_t": float(self.settings.value("peakLabel/minProminenceT", 2.0, type=float)),
+        }
+
+    def _on_auto_label_toggled(self, checked: bool) -> None:
+        self.settings.setValue("view/autoLabelPeaks", checked)
+        self.plot.set_auto_label_enabled(checked)
+        self._refresh_peaks_panel()
+
+    def _on_peak_label_settings(self) -> None:
+        params = self._peak_label_params()
+        dialog = PeakLabelSettingsDialog(
+            max_transmittance=params["max_transmittance"],
+            min_wavenumber=params["min_wavenumber"],
+            min_prominence_t=params["min_prominence_t"],
+            parent=self,
+        )
+        if not dialog.exec():
+            return
+        new_params = dialog.params()
+        self.settings.setValue("peakLabel/maxTransmittance", new_params["max_transmittance"])
+        self.settings.setValue("peakLabel/minWavenumber", new_params["min_wavenumber"])
+        self.settings.setValue("peakLabel/minProminenceT", new_params["min_prominence_t"])
+        self.plot.set_auto_label_params(**new_params)
+        self._refresh_peaks_panel()
+
+    def _refresh_peaks_panel(self, *_args) -> None:
+        """Fill the Peaks table with the selected spectrum's auto-labelled
+        peaks, unless a manual Peak Picking result is currently active."""
+        if self._manual_peak_pick_active:
+            return
+        if not self.auto_label_action.isChecked():
+            self.peaks_panel.clear()
+            return
+        row = self._current_row()
+        if row is None:
+            self.peaks_panel.clear()
+            return
+        spectrum = self.model.entry_at(row).spectrum
+        try:
+            peaks = processing.auto_label_peaks(spectrum, **self._peak_label_params())
+        except ValueError:
+            peaks = []  # single-beam/interferogram/etc.
+        self.peaks_panel.set_peaks(peaks)
 
     # -- list dock actions --------------------------------------------------------------
 
@@ -616,9 +703,13 @@ class MainWindow(QMainWindow):
             self.peaks_panel.set_peaks(peaks)
 
         dialog = PeaksDialog(y_span, on_change=preview, parent=self)
-        if not dialog.exec():
+        accepted = dialog.exec()
+        if accepted:
+            self._manual_peak_pick_active = True
+        else:
+            self._manual_peak_pick_active = False
             self.plot.clear_peaks()
-            self.peaks_panel.clear()
+            self._refresh_peaks_panel()
 
     # -- help menu --------------------------------------------------------------------
 

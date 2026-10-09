@@ -129,3 +129,60 @@ def test_view_box_mouse_and_menu_disabled(qtbot):
     vb = plot.plot_item.getViewBox()
     assert vb.state["mouseEnabled"] == [False, False]
     assert plot.plot_item.buttonsHidden is True
+
+
+# -- automatic peak labelling -------------------------------------------------------------
+
+
+def _labelled_transmittance_entry() -> SpectrumEntry:
+    """A %T spectrum with one deep band above the default 1500 cm-1 cutoff
+    and one deep band below it, so auto-labelling should only mark the
+    first one."""
+    x = np.linspace(4000.0, 400.0, 1800)
+    y = 100.0 - 60.0 / (1.0 + ((x - 2917.0) / 10.0) ** 2) - 60.0 / (1.0 + ((x - 1300.0) / 10.0) ** 2)
+    s = Spectrum(x=x, y=y, x_unit=XUnit.WAVENUMBER, y_unit=YUnit.TRANSMITTANCE)
+    return SpectrumEntry(spectrum=s, name="t", visible=True, color=QColor("#1f77b4"))
+
+
+def test_auto_label_toggle_adds_and_removes_labels(qtbot):
+    plot = SpectrumPlotWidget()
+    qtbot.addWidget(plot)
+    entry = _labelled_transmittance_entry()
+
+    plot.set_auto_label_enabled(True)
+    plot.refresh([entry])
+    assert len(plot._auto_label_items) > 0
+
+    plot.set_auto_label_enabled(False)
+    assert plot._auto_label_items == []
+
+    plot.set_auto_label_enabled(True)
+    assert len(plot._auto_label_items) > 0
+
+
+def test_auto_label_none_for_single_beam_spectrum(qtbot):
+    plot = SpectrumPlotWidget()
+    qtbot.addWidget(plot)
+    plot.set_auto_label_enabled(True)
+    plot.refresh([_entry(YUnit.SINGLE_BEAM)])
+    assert plot._auto_label_items == []
+
+
+def test_auto_label_respects_cutoff_wavenumber(qtbot):
+    plot = SpectrumPlotWidget()
+    qtbot.addWidget(plot)
+    entry = _labelled_transmittance_entry()
+    plot.set_auto_label_enabled(True)
+    plot.refresh([entry])
+
+    # Only the TextItem labels (not the ScatterPlotItem markers) carry text;
+    # every one of them must be above the default 1500 cm-1 cutoff.
+    labelled_positions = [item.pos().x() for item in plot._auto_label_items if isinstance(item, pg.TextItem)]
+    assert labelled_positions, "expected at least one label"
+    assert all(pos > 1500.0 for pos in labelled_positions)
+
+    plot.set_auto_label_params(min_wavenumber=1000.0)
+    labelled_positions_lower_cutoff = [
+        item.pos().x() for item in plot._auto_label_items if isinstance(item, pg.TextItem)
+    ]
+    assert len(labelled_positions_lower_cutoff) > len(labelled_positions)

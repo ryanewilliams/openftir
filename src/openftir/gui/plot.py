@@ -21,9 +21,10 @@ from typing import Iterable
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from openftir.processing import Peak
+from openftir.processing import Peak, auto_label_peaks
 from openftir.spectrum import XUnit, YUnit
 from openftir.gui.spectrum_list import SpectrumEntry
 
@@ -63,6 +64,30 @@ _SPECTRUM_PEN_WIDTH = 1.0
 _HIGHLIGHT_PEN_WIDTH = 1.5
 _OVERLAY_PEN_WIDTH = 1.0
 
+# -- auto peak labelling (View -> Auto-label peaks) --------------------------
+_AUTO_LABEL_FONT_PT = 8
+_AUTO_LABEL_MARKER_SIZE = 5
+#: how far (as a fraction of the visible y span) a label is nudged away from
+#: its dip/peak -- below a %T dip, above an absorbance peak.
+_AUTO_LABEL_Y_OFFSET_FRACTION = 0.05
+#: minimum x separation (as a fraction of the visible x span) between two
+#: placed labels -- the "simple greedy" overlap avoidance. Two labels only
+#: count as conflicting if they are close in BOTH x and y (see
+#: _AUTO_LABEL_MIN_Y_GAP_FRACTION): close in x but far apart in y means
+#: they belong to different, clearly-separated traces (e.g. stacked
+#: spectra, or two overlaid spectra with a close but not coincident band).
+_AUTO_LABEL_MIN_X_GAP_FRACTION = 0.016
+_AUTO_LABEL_MIN_Y_GAP_FRACTION = 0.06
+_AUTO_LABEL_X_MARGIN_FRACTION = 0.015
+_AUTO_LABEL_Y_MARGIN_FRACTION = 0.03
+
+_DEFAULT_AUTO_LABEL_PARAMS: dict = {
+    "max_transmittance": 85.0,
+    "min_wavenumber": 1500.0,
+    "min_prominence_t": 2.0,
+    "min_distance_cm": 15.0,
+}
+
 
 def _cosmetic_pen(*args, **kwargs):
     """``pg.mkPen`` with cosmetic width (device pixels, never scaled)."""
@@ -87,6 +112,9 @@ class SpectrumPlotWidget(QWidget):
         self._preview_y_unit: YUnit | None = None
         self._highlight_row: int | None = None
         self._entries: list[SpectrumEntry] = []
+        self._auto_label_enabled = True
+        self._auto_label_params: dict = dict(_DEFAULT_AUTO_LABEL_PARAMS)
+        self._auto_label_items: list[pg.GraphicsObject] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -203,6 +231,7 @@ class SpectrumPlotWidget(QWidget):
             self.plot_item.removeItem(curve)
         self._curves.clear()
         self.plot_item.legend.clear()
+        self.clear_auto_labels()
 
         visible = [(i, e) for i, e in enumerate(self._entries) if e.visible]
         self._update_axis_labels()
@@ -217,11 +246,17 @@ class SpectrumPlotWidget(QWidget):
             for k in range(len(visible)):
                 offsets[k] = k * gap
 
+        # (position, value, down, color) candidates for auto-labelling,
+        # gathered across every visible trace and placed in one pass below
+        # so overlap avoidance works across spectra, not just within one.
+        label_candidates: list[tuple[float, float, bool, QColor]] = []
+
         for k, (row, entry) in enumerate(visible):
             s = entry.spectrum
             width = _HIGHLIGHT_PEN_WIDTH if row == highlight_row else _SPECTRUM_PEN_WIDTH
             pen = _cosmetic_pen(entry.color, width=width)
-            y = s.y + offsets[k] if self._stack_mode else s.y
+            offset = offsets[k] if self._stack_mode else 0.0
+            y = s.y + offset if self._stack_mode else s.y
             # autoDownsample keeps multi-thousand-point spectra smooth with
             # antialiasing on. clipToView is deliberately not used here: it
             # trips an AttributeError in this pyqtgraph/Qt bindings
@@ -230,7 +265,18 @@ class SpectrumPlotWidget(QWidget):
             curve = self.plot_item.plot(s.x, y, pen=pen, name=entry.name, autoDownsample=True)
             self._curves.append(curve)
 
+            if self._auto_label_enabled:
+                try:
+                    peaks = auto_label_peaks(s, **self._auto_label_params)
+                except ValueError:
+                    peaks = []  # single-beam/interferogram/etc. -- never labelled
+                down = s.y_unit in (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE)
+                for p in peaks:
+                    label_candidates.append((p.position, p.height + offset, down, entry.color))
+
         self.plot_item.vb.autoRange()
+        if label_candidates:
+            self._place_auto_labels(label_candidates)
 
     # -- peak markers -------------------------------------------------------------
 
@@ -255,6 +301,99 @@ class SpectrumPlotWidget(QWidget):
             label.setPos(p.position, p.height)
             self.plot_item.addItem(label)
             self._peak_items.append(label)
+
+    # -- automatic peak labelling (View -> Auto-label peaks) ------------------------
+
+    def set_auto_label_enabled(self, enabled: bool) -> None:
+        self._auto_label_enabled = enabled
+        self.refresh(self._entries, self._highlight_row)
+
+    def set_auto_label_params(
+        self,
+        max_transmittance: float | None = None,
+        min_wavenumber: float | None = None,
+        min_prominence_t: float | None = None,
+        min_distance_cm: float | None = None,
+    ) -> None:
+        for key, value in (
+            ("max_transmittance", max_transmittance),
+            ("min_wavenumber", min_wavenumber),
+            ("min_prominence_t", min_prominence_t),
+            ("min_distance_cm", min_distance_cm),
+        ):
+            if value is not None:
+                self._auto_label_params[key] = value
+        self.refresh(self._entries, self._highlight_row)
+
+    def clear_auto_labels(self) -> None:
+        for item in self._auto_label_items:
+            self.plot_item.removeItem(item)
+        self._auto_label_items.clear()
+
+    def _place_auto_labels(self, candidates: list[tuple[float, float, bool, QColor]]) -> None:
+        """Greedily place a marker + integer wavenumber label per candidate.
+
+        Candidates are processed strongest (deepest dip / tallest peak)
+        first, skipping any whose position falls within
+        ``_AUTO_LABEL_MIN_X_GAP_FRACTION`` of an already-placed label -- a
+        simple way to avoid two labels overlapping when their peaks sit
+        close together, while keeping the more significant band of the
+        pair rather than whichever happens to come first left-to-right.
+        Label positions are clamped inside the current view so they never
+        overlap the plot frame, and the items are added with
+        ``ignoreBounds=True`` so they never affect autorange.
+        """
+        x_range, y_range = self.plot_item.vb.viewRange()
+        x_lo, x_hi = sorted(x_range)
+        y_lo, y_hi = sorted(y_range)
+        x_span = (x_hi - x_lo) or 1.0
+        y_span = (y_hi - y_lo) or 1.0
+        y_offset = y_span * _AUTO_LABEL_Y_OFFSET_FRACTION
+        min_x_gap = x_span * _AUTO_LABEL_MIN_X_GAP_FRACTION
+        min_y_gap = y_span * _AUTO_LABEL_MIN_Y_GAP_FRACTION
+        x_margin = x_span * _AUTO_LABEL_X_MARGIN_FRACTION
+        y_margin = y_span * _AUTO_LABEL_Y_MARGIN_FRACTION
+
+        font = QFont()
+        font.setPointSize(_AUTO_LABEL_FONT_PT)
+
+        # Depth/height below-100 or above-0 as a proxy for how significant a
+        # band is, so a conflict between two close peaks keeps the deeper
+        # (more important) one rather than whichever sorts first in x.
+        def _significance(c: tuple[float, float, bool, QColor]) -> float:
+            _position, value, down, _color = c
+            return (100.0 - value) if down else value
+
+        placed: list[tuple[float, float]] = []
+        ordered = sorted(candidates, key=lambda c: (-_significance(c), c[0]))
+        for position, value, down, color in ordered:
+            label_y_raw = value - y_offset if down else value + y_offset
+            if any(
+                abs(position - px) < min_x_gap and abs(label_y_raw - py) < min_y_gap
+                for px, py in placed
+            ):
+                continue
+            placed.append((position, label_y_raw))
+
+            label_y = min(max(label_y_raw, y_lo + y_margin), y_hi - y_margin)
+            label_x = min(max(position, x_lo + x_margin), x_hi - x_margin)
+
+            marker = pg.ScatterPlotItem(
+                x=[position], y=[value], symbol="o", size=_AUTO_LABEL_MARKER_SIZE,
+                brush=pg.mkBrush(color), pen=pg.mkPen(None),
+            )
+            self.plot_item.addItem(marker, ignoreBounds=True)
+            self._auto_label_items.append(marker)
+
+            text = pg.TextItem(
+                text=str(int(round(position))),
+                color=color,
+                anchor=(0.5, 0.0) if down else (0.5, 1.0),
+            )
+            text.setFont(font)
+            text.setPos(label_x, label_y)
+            self.plot_item.addItem(text, ignoreBounds=True)
+            self._auto_label_items.append(text)
 
     # -- baseline preview -----------------------------------------------------------
 
