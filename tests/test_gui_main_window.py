@@ -6,7 +6,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QRect, QSettings
+from PySide6.QtCore import QRect, QSettings, Qt
 from PySide6.QtGui import QColor, QPalette, QScreen
 from PySide6.QtWidgets import QApplication, QDockWidget, QMainWindow, QToolBar
 
@@ -219,20 +219,21 @@ def test_maximise_then_shrink_keeps_everything_on_screen(qtbot, mode):
 def test_hidden_mode_does_not_inflate_minimum_window_size(qtbot):
     # Regression: the stacked central widget took the larger minimum of both
     # modes, so Advanced mode could not be made narrower than Simple mode's
-    # top bar plus Advanced's docks (~1650 px).
+    # top bar plus Advanced's docks (~1650 px). Compare against what the
+    # visible parts need rather than a pixel constant: text widths vary a lot
+    # between platforms (Windows CI's offscreen fonts are ~1.9x wider).
+    from PySide6.QtWidgets import QDockWidget
+
     window = MainWindow()
     qtbot.addWidget(window)
     window.show()
     window._apply_mode("advanced")
     qtbot.wait(20)
-    from PySide6.QtWidgets import QDockWidget
-    parts = {d.objectName(): d.minimumSizeHint().width() for d in window.findChildren(QDockWidget) if d.isVisible()}
-    parts["central"] = window.centralWidget().minimumSizeHint().width()
-    parts["advanced_page"] = window._central.minimumSizeHint().width()
-    parts["simple_page"] = window._simple_central.minimumSizeHint().width()
-    parts["toolbar"] = window.toolbar.minimumSizeHint().width()
-    parts["collect_panel"] = window.collect_panel.minimumSizeHint().width()
-    assert window.minimumSizeHint().width() < 1300, parts
-    window.resize(1250, 760)
-    qtbot.wait(20)
-    assert window.width() <= 1251
+
+    assert window.centralWidget().minimumSizeHint().width() <= window._central.minimumSizeHint().width() + 4
+
+    docks = [d for d in window.findChildren(QDockWidget) if d.isVisible()]
+    left = max((d.minimumSizeHint().width() for d in docks if window.dockWidgetArea(d) == Qt.LeftDockWidgetArea), default=0)
+    right = max((d.minimumSizeHint().width() for d in docks if window.dockWidgetArea(d) == Qt.RightDockWidgetArea), default=0)
+    needed = left + right + window._central.minimumSizeHint().width()
+    assert window.minimumSizeHint().width() <= needed + 60  # separators/margins
