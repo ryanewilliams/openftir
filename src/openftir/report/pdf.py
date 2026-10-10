@@ -85,24 +85,24 @@ _RIGHT = 0.92
 _TITLE_Y = 0.955
 _RULE1_Y = 0.935
 
-_HEADER_ROW0_Y = 0.900
-_HEADER_ROW_DY = 0.034
+_HEADER_ROW0_Y = 0.908
+_HEADER_ROW_DY = 0.026
 
 _PLOT_LEFT = 0.12
 _PLOT_WIDTH = 0.80
-_PLOT_GAP_BELOW_RULE = 0.045
-_PLOT_HEIGHT = 0.33
+_PLOT_GAP_BELOW_RULE = 0.028
+_PLOT_HEIGHT = 0.29
 
 _TABLE_LEFT = 0.08
 _TABLE_RIGHT = 0.66
 _TABLE_COLS = (0.08, 0.30, 0.48)
 
-_TABLE_TITLE_GAP = 0.075
+_TABLE_TITLE_GAP = 0.066
 _TABLE_RULE_GAP = 0.018
 _TABLE_HEADER_GAP = 0.018
 _TABLE_RULE2_GAP = 0.013
 _TABLE_FIRST_ROW_GAP = 0.017
-_TABLE_ROW_DY = 0.0235
+_TABLE_ROW_DY = 0.021
 _TABLE_MIN_ROW_Y = 0.11  # leave room for the closing rule + footer below it
 
 _FOOTER_Y = 0.035
@@ -263,7 +263,7 @@ def _draw_field_block(fig: Figure, fields: dict) -> float:
         fig.text(0.21, y, b, fontsize=9.5, family=SERIF, va="center")
         fig.text(0.52, y, c, fontsize=8.5, color="#555555", family=SERIF, va="center")
         fig.text(0.65, y, d, fontsize=9.5, family=SERIF, va="center")
-    rule_y = last_y - 0.022
+    rule_y = last_y - 0.017
     fig.add_artist(Line2D([_LEFT, _RIGHT], [rule_y, rule_y], color="black", lw=0.5, transform=fig.transFigure))
     return rule_y
 
@@ -371,17 +371,12 @@ def _draw_table_rows(fig: Figure, rows: list[dict], first_row_y: float) -> float
     for i, r in enumerate(rows):
         y = first_row_y - i * _TABLE_ROW_DY
         last_y = y
-        # Manually picked bands get an asterisk (footnoted below) so the
-        # Assignment column stays blank for the user. Not "▼": Noto Serif
-        # has no glyph for U+25BC.
-        position = f"{r['position']:.0f}*" if r["manual"] else f"{r['position']:.0f}"
-        values = [position, _fmt_value(r["value"]), ""]
+        # Picked and auto bands are listed alike; Assignment stays blank.
+        values = [f"{r['position']:.0f}", _fmt_value(r["value"]), ""]
         for x, v in zip(_TABLE_COLS, values):
             fig.text(x, y, v, fontsize=9.5, family=SERIF, va="center")
     closing_y = last_y - _TABLE_ROW_DY * 0.55
     fig.add_artist(Line2D([_TABLE_LEFT, _TABLE_RIGHT], [closing_y, closing_y], color="black", lw=0.8, transform=fig.transFigure))
-    if any(r["manual"] for r in rows):
-        fig.text(_TABLE_LEFT, closing_y - _TABLE_ROW_DY * 0.8, "* Manually picked band.", fontsize=8, family=SERIF, style="italic", va="center")
     return closing_y
 
 

@@ -73,8 +73,7 @@ def test_report_contains_sample_name_and_peak_numbers_as_text(tmp_path):
     # both show up as plain extractable numbers (fonttype 42 embedding).
     assert "1050" in text
     assert "1700" in text
-    assert "1050*" in text  # manual peaks are asterisked...
-    assert "Manually picked band" in text  # ...and footnoted
+    assert "1050" in text
 
 
 def test_a4_paper_produces_a_valid_pdf(tmp_path):
