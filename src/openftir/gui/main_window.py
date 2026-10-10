@@ -100,15 +100,15 @@ class _PlotAspectContainer(QWidget):
         super().__init__(parent)
         plot_widget.setParent(self)
         self._plot_widget = plot_widget
-        sp = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        sp.setHeightForWidth(True)
-        self.setSizePolicy(sp)
+        self.setSizePolicy(QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred))
         self.setMinimumSize(320, 180)
 
-    def hasHeightForWidth(self) -> bool:
-        return True
-
-    def heightForWidth(self, width: int) -> int:
+    # Deliberately NOT overriding Qt's hasHeightForWidth()/heightForWidth()
+    # virtuals: with PySide6 on Python < 3.12, Qt calling a Python override
+    # that returns a bool leaks a decref on True each call, and after enough
+    # layout passes the interpreter aborts at exit ("free(): invalid
+    # pointer"). The parent areas size this widget explicitly instead.
+    def height_for_width(self, width: int) -> int:
         return int(round(width / self._ASPECT))
 
     def sizeHint(self):
@@ -153,7 +153,7 @@ class _CentralArea(QWidget):
         # plot exactly 9/16 of the width, but never squeeze the tabs below
         # their minimum.
         max_plot_h = max(self.height() - self.tabs.minimumHeight(), 180)
-        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
+        self.plot_container.setFixedHeight(min(self.plot_container.height_for_width(self.width()), max_plot_h))
 
 
 class _SimplePlotToolbar(QWidget):
@@ -294,7 +294,7 @@ class _SimpleCentralArea(QWidget):
         max_plot_h = max(self.height() - reserved, 160)
         available_w = max(self.width() - self.peaks_side_panel.minimumWidth() - 12, 160)
         plot_w = min(available_w, int(max_plot_h * 16 / 9))
-        self.plot_container.setFixedSize(plot_w, self.plot_container.heightForWidth(plot_w))
+        self.plot_container.setFixedSize(plot_w, self.plot_container.height_for_width(plot_w))
 
 
 class MainWindow(QMainWindow):
