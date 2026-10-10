@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openftir import __version__, processing
+from openftir import __version__, processing, report
 from openftir.spectrum import Spectrum, XUnit, YUnit
 from openftir.gui import file_dialogs
 from openftir.gui.collect_controller import CollectController
@@ -56,6 +56,7 @@ from openftir.gui.dialogs import (
     PeakLabelSettingsDialog,
     PeaksDialog,
     ProbeDialog,
+    ReportDialog,
     SmoothDialog,
     SubtractDialog,
 )
@@ -367,7 +368,8 @@ class MainWindow(QMainWindow):
         self.simple_bottom_bar.save_requested.connect(self._on_save_selected)
         self.simple_bottom_bar.delete_requested.connect(self._delete_row)
         self.simple_bottom_bar.open_requested.connect(self._on_open)
-        self.simple_bottom_bar.export_requested.connect(self._on_save_selected)
+        self.simple_bottom_bar.export_pdf_requested.connect(self._on_export_pdf_report)
+        self.simple_bottom_bar.export_data_requested.connect(self._on_save_selected)
 
         self.simple_settings_strip = SimpleSettingsStrip(self.collect_controller, self.simple_top_bar, self)
         self.simple_plot_toolbar = _SimplePlotToolbar(
@@ -512,6 +514,11 @@ class MainWindow(QMainWindow):
         export_action = QAction("&Export Plot As...", self)
         export_action.triggered.connect(self._on_export_plot)
         file_menu.addAction(export_action)
+
+        export_report_action = QAction("Export PDF &Report...", self)
+        export_report_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
+        export_report_action.triggered.connect(self._on_export_pdf_report)
+        file_menu.addAction(export_report_action)
 
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
@@ -1026,6 +1033,59 @@ class MainWindow(QMainWindow):
             exporter.export(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export Plot", f"Could not export plot:\n{exc}")
+
+    def _on_export_pdf_report(self, row: int | None = None) -> None:
+        if row is None:
+            row = self._current_row()
+        if row is None:
+            QMessageBox.information(self, "Export PDF Report", "Select a spectrum first.")
+            return
+        entry = self.model.entry_at(row)
+        spectrum = entry.spectrum
+        if spectrum.y_unit not in (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE, YUnit.ABSORBANCE):
+            QMessageBox.information(
+                self,
+                "Export PDF Report",
+                "A PDF report needs a %Transmittance, %Reflectance or Absorbance spectrum. "
+                "Convert the spectrum first (Process menu).",
+            )
+            return
+
+        dialog = ReportDialog(entry.name, self)
+        if not dialog.exec():
+            return
+        sample_name = dialog.sample_name() or entry.name
+        paper = dialog.paper()
+
+        default_name = file_dialogs.sanitize_filename(sample_name) + " report.pdf"
+        path = file_dialogs.get_save_path(self, "Export PDF Report", default_name, "PDF Document (*.pdf)")
+        if not path:
+            return
+
+        info: dict = {}
+        bg_time = self.collect_controller.background_time
+        if bg_time is not None:
+            info["background_time"] = bg_time
+        driver_id = spectrum.meta.get("driver") or self.collect_controller.driver_id
+        if driver_id:
+            display_name = self.collect_controller.driver_display_names().get(driver_id)
+            if display_name:
+                info["driver_display_name"] = display_name
+
+        try:
+            report.export_report_pdf(
+                path,
+                spectrum,
+                title=sample_name,
+                manual_peaks=list(entry.manual_peaks),
+                auto_peak_params=self._peak_label_params(),
+                paper=paper,
+                info=info,
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Export PDF Report", f"Could not export report:\n{exc}")
+            return
+        self.statusBar().showMessage(f"Report saved to {path}")
 
     def _add_recent_file(self, path: str) -> None:
         recent = self.settings.value("recentFiles", [], type=list)

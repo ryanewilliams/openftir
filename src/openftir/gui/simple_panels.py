@@ -14,6 +14,7 @@ from openftir.spectrum import YUnit
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -602,7 +603,11 @@ class SimpleBottomBar(QWidget):
     save_requested = Signal(int)
     delete_requested = Signal(int)
     open_requested = Signal()
-    export_requested = Signal()
+    #: "PDF report..." (listed first/default) and "Data file..." (the
+    #: existing save-to-disk flow) -- see MainWindow._on_export_pdf_report /
+    #: _on_save_selected.
+    export_pdf_requested = Signal()
+    export_data_requested = Signal()
 
     def __init__(self, model: SpectrumListModel, controller: CollectController, parent=None):
         super().__init__(parent)
@@ -645,8 +650,20 @@ class SimpleBottomBar(QWidget):
         )
         self._open_chip.clicked.connect(self.open_requested.emit)
 
-        self.export_btn = QPushButton("Export")
-        self.export_btn.clicked.connect(self.export_requested.emit)
+        # A small dropdown rather than a plain button: "PDF report..." is
+        # listed first (the common case for a finished sample), "Data
+        # file..." is the original save-to-disk behaviour.
+        self.export_btn = QToolButton(self)
+        self.export_btn.setText("Export")
+        self.export_btn.setPopupMode(QToolButton.InstantPopup)
+        export_menu = QMenu(self.export_btn)
+        pdf_action = QAction("PDF report…", self.export_btn)
+        pdf_action.triggered.connect(self.export_pdf_requested.emit)
+        export_menu.addAction(pdf_action)
+        data_action = QAction("Data file…", self.export_btn)
+        data_action.triggered.connect(self.export_data_requested.emit)
+        export_menu.addAction(data_action)
+        self.export_btn.setMenu(export_menu)
         outer.addWidget(self.export_btn, 0)
 
         self._age_timer = QTimer(self)

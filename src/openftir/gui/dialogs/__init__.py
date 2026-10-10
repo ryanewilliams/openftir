@@ -6,6 +6,7 @@ from .normalize_dialog import NormalizeDialog
 from .peak_label_settings_dialog import PeakLabelSettingsDialog
 from .peaks_dialog import PeaksDialog
 from .probe_dialog import ProbeDialog
+from .report_dialog import ReportDialog
 from .simple_settings_dialog import SimpleSettingsDialog
 from .smooth_dialog import SmoothDialog
 from .subtract_dialog import SubtractDialog
@@ -19,6 +20,7 @@ __all__ = [
     "PeakLabelSettingsDialog",
     "PeaksDialog",
     "ProbeDialog",
+    "ReportDialog",
     "SimpleSettingsDialog",
     "SmoothDialog",
     "SubtractDialog",

@@ -39,7 +39,22 @@ common = dict(
     hiddenimports=hidden,
     binaries=libusb_binaries,
     datas=libusb_datas + openftir_datas,
-    excludes=["tkinter", "matplotlib", "IPython", "pytest"],
+    # matplotlib itself is needed now (openftir.report's PDF export, backend
+    # "pdf" only), but not its GUI backends: the app embeds matplotlib's
+    # Figure/PdfPages directly and never shows an interactive matplotlib
+    # window, so every backend other than "pdf"/"agg" (and the heavy
+    # notebook/IPython stack pulled in by lazy-imports) is dead weight.
+    excludes=[
+        "tkinter",
+        "matplotlib.backends.backend_tkagg",
+        "matplotlib.backends.backend_qtagg",
+        "matplotlib.backends.backend_qt5agg",
+        "matplotlib.backends.backend_qtcairo",
+        "matplotlib.backends.backend_webagg",
+        "matplotlib.backends.backend_nbagg",
+        "IPython",
+        "pytest",
+    ],
     noarchive=False,
 )
 
