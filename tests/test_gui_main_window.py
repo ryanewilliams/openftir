@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRect, QSettings
@@ -186,3 +188,44 @@ def test_plot_sits_at_top_of_central_area(qtbot):
     assert window.plot.y() == 0
     # The tabs below take the remaining space instead of empty bands.
     assert window._central.tabs.y() >= container.height()
+
+
+@pytest.mark.parametrize("mode", ["advanced", "simple"])
+def test_maximise_then_shrink_keeps_everything_on_screen(qtbot, mode):
+    # Regression: the plot's height was pinned with setFixedHeight (which is
+    # also a minimum), so after the window had been large it could not shrink
+    # back and maximising pushed the Peaks/Details tabs off screen.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window._apply_mode(mode)
+    for size in ((2600, 1500), (1100, 700), (2600, 1500), (1000, 650)):
+        window.resize(*size)
+        qtbot.wait(30)
+    assert window.height() <= 650 + 1
+    assert window.minimumSizeHint().height() < 650
+    central = window._central if mode == "advanced" else window._simple_central
+    assert central.geometry().bottom() <= window.height()
+    plot_box = window._central.plot_container
+    # The plot's box must sit inside its parent, and in Advanced mode the
+    # tabs must keep at least their minimum height below it.
+    assert plot_box.geometry().bottom() <= plot_box.parent().height()
+    if mode == "advanced":
+        tabs = window._central.tabs
+        assert tabs.height() >= 150
+        assert tabs.geometry().bottom() <= window._central.height()
+
+
+def test_hidden_mode_does_not_inflate_minimum_window_size(qtbot):
+    # Regression: the stacked central widget took the larger minimum of both
+    # modes, so Advanced mode could not be made narrower than Simple mode's
+    # top bar plus Advanced's docks (~1650 px).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window._apply_mode("advanced")
+    qtbot.wait(20)
+    assert window.minimumSizeHint().width() < 1300
+    window.resize(1250, 760)
+    qtbot.wait(20)
+    assert window.width() <= 1251

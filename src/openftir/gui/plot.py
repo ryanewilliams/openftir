@@ -349,7 +349,12 @@ class SpectrumPlotWidget(QWidget):
 
         if label_candidates:
             self._reserve_label_headroom(visible, offsets, label_candidates)
-        self.plot_item.vb.autoRange()
+        if visible or self._preview_item is not None:
+            self.plot_item.vb.autoRange()
+        else:
+            # Empty plot: show the usual mid-IR window rather than pyqtgraph's
+            # meaningless default 0-1 range.
+            self.plot_item.vb.setRange(xRange=(600, 4000), yRange=(0, 100), padding=0.02)
         if label_candidates:
             self._place_auto_labels(label_candidates)
 

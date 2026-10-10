@@ -125,7 +125,15 @@ class _PlotAspectContainer(QWidget):
 
 class _CentralArea(QWidget):
     """Advanced mode's central widget: plot at the top (16:9), Peaks/Details
-    tabs filling the space below."""
+    tabs filling the space below.
+
+    Children are positioned by hand in resizeEvent rather than with a layout
+    plus a pinned plot height: a fixed height also acts as a minimum, so once
+    the window had been large it could never shrink back and maximising
+    pushed the tabs (and dock contents) off screen."""
+
+    _TABS_MIN_H = 200  # keep several peak rows visible
+    _PLOT_MIN_H = 160
 
     def __init__(self, plot_container: _PlotAspectContainer, peaks_panel: QWidget, details_panel: QWidget, parent=None):
         super().__init__(parent)
@@ -133,27 +141,32 @@ class _CentralArea(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.addTab(peaks_panel, "Peaks")
         self.tabs.addTab(details_panel, "Details")
-        self.tabs.setMinimumHeight(200)  # keep several peak rows visible
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.plot_container, 0)
-        layout.addWidget(self.tabs, 1)
+        plot_container.setParent(self)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(320, self._PLOT_MIN_H + self._TABS_MIN_H)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(960, 540 + self._TABS_MIN_H)
 
     def activate(self) -> None:
-        """Reclaim the shared plot container into this layout (it may
-        currently be living inside Simple mode's central widget)."""
-        # Simple mode pins the container to an exact width; undo that here.
-        self.plot_container.setMinimumWidth(0)
-        self.plot_container.setMaximumWidth(16777215)
-        self.layout().insertWidget(0, self.plot_container)
+        """Reclaim the shared plot container (it may currently be living
+        inside Simple mode's central widget)."""
+        self.plot_container.setParent(self)
+        self.plot_container.show()
+        self._relayout()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        # Height-for-width isn't honoured by QVBoxLayout on its own; give the
-        # plot exactly 9/16 of the width, but never squeeze the tabs below
-        # their minimum.
-        max_plot_h = max(self.height() - self.tabs.minimumHeight(), 180)
-        self.plot_container.setFixedHeight(min(self.plot_container.height_for_width(self.width()), max_plot_h))
+        self._relayout()
+
+    def _relayout(self) -> None:
+        w, h = self.width(), self.height()
+        plot_h = min(self.plot_container.height_for_width(w), h - self._TABS_MIN_H)
+        plot_h = max(plot_h, min(self._PLOT_MIN_H, h))
+        if self.plot_container.parent() is self:
+            self.plot_container.setGeometry(0, 0, w, plot_h)
+        self.tabs.setGeometry(0, plot_h, w, max(h - plot_h, 0))
 
 
 class _SimplePlotToolbar(QWidget):
@@ -232,6 +245,50 @@ class _PeaksSidePanel(QWidget):
         layout.addWidget(peaks_panel, 1)
 
 
+class _SimpleBody(QWidget):
+    """Simple mode's plot + Peaks panel row, positioned by hand: the plot is
+    as large as fits at 16:9 and the panel takes the remaining width (within
+    its min/max). Nothing is pinned with fixed sizes, so the window can
+    always shrink again (see _CentralArea)."""
+
+    _GAP = 12
+    _PANEL_MIN_W = 240
+    _PANEL_MAX_W = 420
+
+    def __init__(self, plot_container: _PlotAspectContainer, panel: QWidget, parent=None):
+        super().__init__(parent)
+        self.plot_container = plot_container
+        self.panel = panel
+        plot_container.setParent(self)
+        panel.setParent(self)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(320 + self._GAP + self._PANEL_MIN_W, 180)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(960 + self._GAP + self._PANEL_MAX_W, 540)
+
+    def activate(self) -> None:
+        self.plot_container.setParent(self)
+        self.plot_container.show()
+        self._relayout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self) -> None:
+        w, h = self.width(), self.height()
+        plot_w = min(w - self._PANEL_MIN_W - self._GAP, int(h * 16 / 9))
+        plot_w = max(plot_w, min(320, w))
+        plot_h = min(self.plot_container.height_for_width(plot_w), h)
+        if self.plot_container.parent() is self:
+            self.plot_container.setGeometry(0, 0, plot_w, plot_h)
+        panel_x = plot_w + self._GAP
+        panel_w = max(min(self._PANEL_MAX_W, w - panel_x), 0)
+        self.panel.setGeometry(panel_x, 0, panel_w, h)
+
+
 class _SimpleCentralArea(QWidget):
     """Simple mode's central widget: top bar, settings strip, the slim
     plot-toolbar row, plot (16:9) + Peaks side panel, bottom bar."""
@@ -261,40 +318,15 @@ class _SimpleCentralArea(QWidget):
         layout.addWidget(settings_strip, 0)
         layout.addWidget(plot_toolbar, 0)
 
-        self._body = QWidget(self)
-        self._body_layout = QHBoxLayout(self._body)
-        self._body_layout.setContentsMargins(0, 0, 0, 0)
-        self._body_layout.setSpacing(0)
-        self._body_layout.addWidget(plot_container, 0)
-        self._body_layout.addSpacing(12)
-        self._body_layout.addWidget(peaks_side_panel, 1)
-        peaks_side_panel.setMinimumWidth(240)
-        peaks_side_panel.setMaximumWidth(420)
-        self._body_layout.addStretch(0)
+        self._body = _SimpleBody(plot_container, peaks_side_panel, self)
         layout.addWidget(self._body, 1)
 
         layout.addWidget(bottom_bar, 0)
 
     def activate(self) -> None:
-        """Reclaim the shared plot container into this layout (it may
-        currently be living inside Advanced mode's central widget)."""
-        self._body_layout.insertWidget(0, self.plot_container)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        reserved = (
-            self.top_bar.sizeHint().height()
-            + self.settings_strip.sizeHint().height()
-            + self.plot_toolbar.sizeHint().height()
-            + self.bottom_bar.sizeHint().height()
-        )
-        # Size the plot box to exactly 16:9: as tall as the space allows, but
-        # leaving the Peaks panel at least its minimum width. The panel then
-        # takes the remaining width instead of empty margins around the plot.
-        max_plot_h = max(self.height() - reserved, 160)
-        available_w = max(self.width() - self.peaks_side_panel.minimumWidth() - 12, 160)
-        plot_w = min(available_w, int(max_plot_h * 16 / 9))
-        self.plot_container.setFixedSize(plot_w, self.plot_container.height_for_width(plot_w))
+        """Reclaim the shared plot container (it may currently be living
+        inside Advanced mode's central widget)."""
+        self._body.activate()
 
 
 class MainWindow(QMainWindow):
@@ -673,6 +705,19 @@ class MainWindow(QMainWindow):
             self.simple_settings_strip.set_active(False)
             self.simple_bottom_bar.set_active(False)
 
+        # A QStackedWidget's minimum size is the largest of *all* its pages,
+        # so the hidden mode's wide top bar would stop Advanced mode (plus
+        # its docks) from fitting on a laptop screen. Only the visible page
+        # may count.
+        current = self._stack.currentWidget()
+        for i in range(self._stack.count()):
+            page = self._stack.widget(i)
+            if page is current:
+                page.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+            else:
+                page.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self._stack.updateGeometry()
+
         self._mode = mode
         self.settings.setValue("ui/mode", mode)
         self.simple_mode_action.setChecked(mode == "simple")
@@ -991,6 +1036,8 @@ class MainWindow(QMainWindow):
 
         if loaded_any:
             self.plot.full_scale()
+            # Select the last opened spectrum so its peaks/details show at once.
+            self.list_view.setCurrentIndex(self.model.index(self.model.rowCount() - 1))
         if errors:
             QMessageBox.critical(self, "Open", "Some files could not be opened:\n\n" + "\n".join(errors))
 
