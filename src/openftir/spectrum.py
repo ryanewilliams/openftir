@@ -87,3 +87,16 @@ class Spectrum:
     def sorted_ascending(self) -> "Spectrum":
         order = np.argsort(self.x)
         return self.copy(x=self.x[order], y=self.y[order])
+
+
+def local_naive(dt: datetime | None) -> datetime | None:
+    """``dt`` as a naive datetime in this computer's local time zone.
+
+    Timestamps read from instrument files can be timezone-aware (OMNIC .spa
+    files store UTC); collections made in the app are naive local times.
+    Use this before displaying a time or subtracting it from
+    ``datetime.now()``.
+    """
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone().replace(tzinfo=None)

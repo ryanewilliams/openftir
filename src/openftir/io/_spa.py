@@ -47,7 +47,7 @@ from __future__ import annotations
 import os
 import re
 import struct
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -68,7 +68,8 @@ _TITLE_MAX_LEN = _NLINES_OFFSET - _TITLE_OFFSET
 # 1899-12-31 00:00:00 (verified against a real file: the decoded datetime
 # matched the "Collect Sample on ..." text in the log block to the second,
 # modulo timezone).
-_OMNIC_EPOCH = datetime(1899, 12, 31)
+# OMNIC stores the acquisition time as seconds since this epoch, in UTC.
+_OMNIC_EPOCH = datetime(1899, 12, 31, tzinfo=timezone.utc)
 
 _TYPE_HEADER = 2
 _TYPE_DATA = 3

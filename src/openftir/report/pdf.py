@@ -34,7 +34,7 @@ matplotlib.rcParams["pdf.fonttype"] = 42
 
 from openftir import __version__
 from openftir.processing import auto_label_peaks
-from openftir.spectrum import Spectrum, YUnit
+from openftir.spectrum import local_naive, Spectrum, YUnit
 
 __all__ = ["export_report_pdf"]
 
@@ -97,7 +97,7 @@ _TABLE_LEFT = 0.08
 _TABLE_RIGHT = 0.66
 _TABLE_COLS = (0.08, 0.30, 0.48)
 
-_TABLE_TITLE_GAP = 0.045
+_TABLE_TITLE_GAP = 0.075
 _TABLE_RULE_GAP = 0.018
 _TABLE_HEADER_GAP = 0.018
 _TABLE_RULE2_GAP = 0.013
@@ -137,6 +137,7 @@ def _fmt_value(value: float) -> str:
 
 
 def _format_dt(dt: datetime) -> str:
+    dt = local_naive(dt)  # .spa times are UTC; show the reader's local time
     return f"{dt.day} {dt.strftime('%B %Y, %H:%M')}"
 
 
@@ -370,15 +371,17 @@ def _draw_table_rows(fig: Figure, rows: list[dict], first_row_y: float) -> float
     for i, r in enumerate(rows):
         y = first_row_y - i * _TABLE_ROW_DY
         last_y = y
-        # "(picked)" rather than the "▼" marker used on the plot itself:
-        # Noto Serif has no glyph for U+25BC, so a down-triangle *character*
-        # here would render as a missing-glyph box in the embedded font.
-        assignment = "(picked)" if r["manual"] else ""
-        values = [f"{r['position']:.0f}", _fmt_value(r["value"]), assignment]
+        # Manually picked bands get an asterisk (footnoted below) so the
+        # Assignment column stays blank for the user. Not "▼": Noto Serif
+        # has no glyph for U+25BC.
+        position = f"{r['position']:.0f}*" if r["manual"] else f"{r['position']:.0f}"
+        values = [position, _fmt_value(r["value"]), ""]
         for x, v in zip(_TABLE_COLS, values):
             fig.text(x, y, v, fontsize=9.5, family=SERIF, va="center")
     closing_y = last_y - _TABLE_ROW_DY * 0.55
     fig.add_artist(Line2D([_TABLE_LEFT, _TABLE_RIGHT], [closing_y, closing_y], color="black", lw=0.8, transform=fig.transFigure))
+    if any(r["manual"] for r in rows):
+        fig.text(_TABLE_LEFT, closing_y - _TABLE_ROW_DY * 0.8, "* Manually picked band.", fontsize=8, family=SERIF, style="italic", va="center")
     return closing_y
 
 

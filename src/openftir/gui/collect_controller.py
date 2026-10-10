@@ -26,7 +26,7 @@ from PySide6.QtCore import QObject, QSettings, Signal
 from openftir.instruments import registry
 from openftir.instruments.base import CollectParams, Instrument, InstrumentInfo
 from openftir.processing import ratio
-from openftir.spectrum import Spectrum, YUnit
+from openftir.spectrum import local_naive, Spectrum, YUnit
 from openftir.gui.workers import CallWorker, CollectWorker, start_worker
 
 BACKGROUND_WARN_AFTER = timedelta(minutes=60)
@@ -372,7 +372,7 @@ class CollectController(QObject):
             return
         spectrum = spectra[0]
         self._background = spectrum
-        self._background_time = spectrum.acquired or datetime.now()
+        self._background_time = local_naive(spectrum.acquired) or datetime.now()
         self.background_changed.emit()
         name = f"Background {self._background_time:%H:%M:%S}"
         self.collect_finished.emit("background", spectrum, name)

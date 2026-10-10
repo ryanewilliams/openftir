@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openftir.spectrum import Spectrum
+from openftir.spectrum import local_naive, Spectrum
 
 
 class DetailsPanel(QWidget):
@@ -72,7 +72,8 @@ class DetailsPanel(QWidget):
             self._range.setText(f"{np.min(spectrum.x):.1f} – {np.max(spectrum.x):.1f} {spectrum.x_unit.value}")
         else:
             self._range.setText("–")
-        self._acquired.setText(spectrum.acquired.isoformat(sep=" ") if spectrum.acquired else "unknown")
+        acquired = local_naive(spectrum.acquired)
+        self._acquired.setText(acquired.isoformat(sep=" ", timespec="seconds") if acquired else "unknown")
 
         self._meta_table.setRowCount(len(spectrum.meta))
         for row, (key, value) in enumerate(sorted(spectrum.meta.items())):
