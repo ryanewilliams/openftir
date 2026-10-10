@@ -8,6 +8,8 @@ for a single-screen, minimal workflow.
 
 from __future__ import annotations
 
+from openftir.spectrum import YUnit
+
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -103,10 +105,8 @@ class SimpleTopBar(QWidget):
         self.collect_btn.clicked.connect(self._on_collect_clicked)
         row.addWidget(self.collect_btn)
 
-        self.settings_btn = QToolButton()
-        self.settings_btn.setText("⚙")
-        self.settings_btn.setToolTip("Settings")
-        self.settings_btn.setAutoRaise(True)
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setToolTip("Instrument and collection settings")
         self.settings_btn.clicked.connect(self._open_settings)
         row.addWidget(self.settings_btn)
 
@@ -484,6 +484,8 @@ class SimpleBottomBar(QWidget):
 
         self._chip_layout.addWidget(self.background_chip)
         for row, entry in enumerate(self.model.entries()):
+            if entry.spectrum.y_unit == YUnit.SINGLE_BEAM:
+                continue  # backgrounds are shown by the background-age chip
             chip = SpectrumChip(row, entry)
             chip.clicked.connect(self.select_row_requested.emit)
             chip.visibility_toggled.connect(self.visibility_toggle_requested.emit)

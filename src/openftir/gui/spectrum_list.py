@@ -115,14 +115,14 @@ class SpectrumListModel(QAbstractListModel):
     def spectrum_at(self, row: int) -> Spectrum:
         return self._entries[row].spectrum
 
-    def add(self, spectrum: Spectrum, name: str | None = None) -> int:
+    def add(self, spectrum: Spectrum, name: str | None = None, visible: bool = True) -> int:
         """Append a new entry, returning its row index."""
         final_name = name or spectrum.title or f"Spectrum {len(self._entries) + 1}"
         color = QColor(_PALETTE[self._next_color % len(_PALETTE)])
         self._next_color += 1
         row = len(self._entries)
         self.beginInsertRows(QModelIndex(), row, row)
-        self._entries.append(SpectrumEntry(spectrum=spectrum, name=final_name, color=color))
+        self._entries.append(SpectrumEntry(spectrum=spectrum, name=final_name, color=color, visible=visible))
         self.endInsertRows()
         self.visibility_changed.emit()
         return row

@@ -650,7 +650,9 @@ class MainWindow(QMainWindow):
                 continue
             stem = Path(path).stem
             for i, spectrum in enumerate(spectra):
-                name = spectrum.title or (stem if len(spectra) == 1 else f"{stem} [{i + 1}]")
+                # Single-spectrum files are named after the file (OMNIC titles are
+                # often just a timestamp); groups use each spectrum's own title.
+                name = stem if len(spectra) == 1 else (spectrum.title or f"{stem} [{i + 1}]")
                 self.model.add(spectrum, name=name)
                 loaded_any = True
             if spectra:
@@ -901,6 +903,11 @@ class MainWindow(QMainWindow):
 
     def _on_spectrum_collected(self, spectrum: Spectrum, name: str) -> None:
         self.plot.clear_live_preview()
+        if spectrum.y_unit == YUnit.SINGLE_BEAM:
+            # A background: kept in the list (Advanced mode can tick it on to
+            # inspect it) but hidden, so it doesn't share an axis with %T data.
+            self.model.add(spectrum, name=name, visible=False)
+            return
         row = self.model.add(spectrum, name=name)
         self.list_view.setCurrentIndex(self.model.index(row))
 

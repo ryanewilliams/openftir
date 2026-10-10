@@ -21,7 +21,7 @@ from typing import Iterable
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QFontMetricsF
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from openftir.processing import Peak, auto_label_peaks
@@ -395,16 +395,24 @@ class SpectrumPlotWidget(QWidget):
             _position, value, down, _color = c
             return (100.0 - value) if down else value
 
-        placed: list[tuple[float, float]] = []
+        # Overlap test in real label extents: measure the text in pixels and
+        # convert to data units, so labels never collide at any window size.
+        metrics = QFontMetricsF(font)
+        px_w, px_h = self.plot_item.vb.viewPixelSize()
+        px_w, px_h = abs(px_w) or x_span / 600, abs(px_h) or y_span / 300
+        text_h = (metrics.height() + 2) * px_h
+
+        placed: list[tuple[float, float, float]] = []  # (x, y, half width)
         ordered = sorted(candidates, key=lambda c: (-_significance(c), c[0]))
         for position, value, down, color in ordered:
             label_y_raw = value - y_offset if down else value + y_offset
+            half_w = (metrics.horizontalAdvance(str(int(round(position)))) / 2 + 3) * px_w
             if any(
-                abs(position - px) < min_x_gap and abs(label_y_raw - py) < min_y_gap
-                for px, py in placed
+                abs(position - px) < max(half_w + pw, min_x_gap) and abs(label_y_raw - py) < max(text_h, min_y_gap)
+                for px, py, pw in placed
             ):
                 continue
-            placed.append((position, label_y_raw))
+            placed.append((position, label_y_raw, half_w))
 
             label_y = min(max(label_y_raw, y_lo + y_margin), y_hi - y_margin)
             label_x = min(max(position, x_lo + x_margin), x_hi - x_margin)
