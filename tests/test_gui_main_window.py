@@ -225,7 +225,14 @@ def test_hidden_mode_does_not_inflate_minimum_window_size(qtbot):
     window.show()
     window._apply_mode("advanced")
     qtbot.wait(20)
-    assert window.minimumSizeHint().width() < 1300
+    from PySide6.QtWidgets import QDockWidget
+    parts = {d.objectName(): d.minimumSizeHint().width() for d in window.findChildren(QDockWidget) if d.isVisible()}
+    parts["central"] = window.centralWidget().minimumSizeHint().width()
+    parts["advanced_page"] = window._central.minimumSizeHint().width()
+    parts["simple_page"] = window._simple_central.minimumSizeHint().width()
+    parts["toolbar"] = window.toolbar.minimumSizeHint().width()
+    parts["collect_panel"] = window.collect_panel.minimumSizeHint().width()
+    assert window.minimumSizeHint().width() < 1300, parts
     window.resize(1250, 760)
     qtbot.wait(20)
     assert window.width() <= 1251
