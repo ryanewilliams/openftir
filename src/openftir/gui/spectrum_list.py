@@ -32,6 +32,12 @@ class SpectrumEntry:
     name: str
     visible: bool = True
     color: QColor = field(default_factory=lambda: QColor(_PALETTE[0]))
+    # Manually picked peak positions (cm-1), both in Simple and Advanced mode
+    # -- see openftir.gui.plot's pick-peaks mode. Mirrored into
+    # ``spectrum.meta["manual_peaks"]`` so they round-trip through .ofjson
+    # save/load (see SpectrumListModel.add/set_manual_peaks below).
+    # Processing actions that derive a new spectrum never copy this list.
+    manual_peaks: list[float] = field(default_factory=list)
 
 
 class SpectrumListModel(QAbstractListModel):
@@ -115,17 +121,52 @@ class SpectrumListModel(QAbstractListModel):
     def spectrum_at(self, row: int) -> Spectrum:
         return self._entries[row].spectrum
 
-    def add(self, spectrum: Spectrum, name: str | None = None, visible: bool = True) -> int:
-        """Append a new entry, returning its row index."""
+    def add(
+        self,
+        spectrum: Spectrum,
+        name: str | None = None,
+        visible: bool = True,
+        manual_peaks: list[float] | None = None,
+    ) -> int:
+        """Append a new entry, returning its row index.
+
+        ``manual_peaks`` is only meant for restoring a spectrum that already
+        carries them (e.g. loading a .ofjson file -- see
+        MainWindow._open_paths): leave it ``None`` for every other caller
+        (a freshly collected spectrum, or one just derived by a processing
+        action) so manual peaks are never silently inherited from whatever
+        happened to be left in ``spectrum.meta`` -- processing functions
+        copy ``meta`` wholesale, so a derived spectrum's dict can still
+        carry a stale ``"manual_peaks"`` key from its source.
+        """
         final_name = name or spectrum.title or f"Spectrum {len(self._entries) + 1}"
         color = QColor(_PALETTE[self._next_color % len(_PALETTE)])
         self._next_color += 1
         row = len(self._entries)
+        if manual_peaks is None:
+            spectrum.meta.pop("manual_peaks", None)
+            manual_peaks = []
+        else:
+            manual_peaks = list(manual_peaks)
+            spectrum.meta["manual_peaks"] = list(manual_peaks)
         self.beginInsertRows(QModelIndex(), row, row)
-        self._entries.append(SpectrumEntry(spectrum=spectrum, name=final_name, color=color, visible=visible))
+        self._entries.append(
+            SpectrumEntry(spectrum=spectrum, name=final_name, color=color, visible=visible, manual_peaks=manual_peaks)
+        )
         self.endInsertRows()
         self.visibility_changed.emit()
         return row
+
+    def set_manual_peaks(self, row: int, positions: list[float]) -> None:
+        """Replace the manual peak positions (cm-1) for ``row``, mirroring
+        them into ``spectrum.meta["manual_peaks"]`` for persistence."""
+        if not (0 <= row < len(self._entries)):
+            return
+        entry = self._entries[row]
+        entry.manual_peaks = sorted(float(p) for p in positions)
+        entry.spectrum.meta["manual_peaks"] = list(entry.manual_peaks)
+        index = self.index(row)
+        self.dataChanged.emit(index, index)
 
     def replace_spectrum(self, row: int, spectrum: Spectrum) -> None:
         """Swap the Spectrum object held at ``row`` in place (same name/colour)."""

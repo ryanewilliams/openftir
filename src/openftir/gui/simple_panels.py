@@ -1,7 +1,8 @@
-"""Simple mode's top bar (status pill + Background/Collect sample/gear) and
-bottom bar (spectrum chips + Export), both thin views over the shared
-:class:`~openftir.gui.collect_controller.CollectController` and the shared
-:class:`~openftir.gui.spectrum_list.SpectrumListModel` -- exactly like
+"""Simple mode's top bar (instrument + connect + Background/Collect sample),
+settings strip (scans/resolution/range/format, always visible and editable
+inline), and bottom bar (spectrum chips + Export) -- all thin views over the
+shared :class:`~openftir.gui.collect_controller.CollectController` and the
+shared :class:`~openftir.gui.spectrum_list.SpectrumListModel`, exactly like
 Advanced mode's ``CollectPanel`` dock and spectra list dock, just laid out
 for a single-screen, minimal workflow.
 """
@@ -14,6 +15,8 @@ from typing import Callable
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -23,12 +26,18 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from openftir.gui.collect_controller import CollectController
+from openftir.gui.collect_controller import (
+    CollectController,
+    DEFAULT_SCANS,
+    FORMATS,
+    SIMULATED_SAMPLES,
+)
 from openftir.gui.dialogs.simple_settings_dialog import SimpleSettingsDialog
 from openftir.gui.spectrum_list import SpectrumListModel
 
@@ -38,14 +47,15 @@ _PILL_COLORS = {
     "busy": ("#2a82da", "white"),
 }
 _PILL_STYLE = (
-    "QPushButton {{ border-radius: 10px; padding: 3px 14px; border: none;"
+    "QLabel {{ border-radius: 10px; padding: 3px 14px;"
     " font-weight: 500; background-color: {bg}; color: {fg}; }}"
 )
 
 
 class SimpleTopBar(QWidget):
-    """Title + status pill + Background/Collect sample/gear/Advanced, plus a
-    thin progress bar that appears under the row during a collection."""
+    """Title, instrument picker + Connect/Disconnect + status pill,
+    Background/Collect sample/Advanced, plus a thin progress bar that
+    appears under the row during a collection."""
 
     #: spectrum, chosen name -- mirrors CollectPanel.spectrum_collected
     spectrum_collected = Signal(object, str)
@@ -82,16 +92,28 @@ class SimpleTopBar(QWidget):
         outer.setSpacing(4)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(8)
 
         title = QLabel("OpenFTIR")
         title.setStyleSheet("font-size: 15pt; font-weight: 600;")
         row.addWidget(title)
+        row.addSpacing(8)
 
-        self.pill = QPushButton("Not connected")
-        self.pill.setFlat(True)
-        self.pill.setCursor(Qt.PointingHandCursor)
-        self.pill.clicked.connect(self._on_pill_clicked)
+        self.instrument_combo = QComboBox()
+        self.instrument_combo.setMinimumWidth(150)
+        self.instrument_combo.currentIndexChanged.connect(self._on_instrument_combo_changed)
+        row.addWidget(self.instrument_combo)
+
+        self.sim_sample_combo = QComboBox()
+        self.sim_sample_combo.addItems(SIMULATED_SAMPLES)
+        self.sim_sample_combo.currentTextChanged.connect(self._on_sim_sample_changed)
+        row.addWidget(self.sim_sample_combo)
+
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.clicked.connect(self._on_connect_clicked)
+        row.addWidget(self.connect_btn)
+
+        self.pill = QLabel("Not connected")
         row.addWidget(self.pill)
 
         row.addStretch(1)
@@ -104,11 +126,6 @@ class SimpleTopBar(QWidget):
         self.collect_btn.setObjectName("accentButton")
         self.collect_btn.clicked.connect(self._on_collect_clicked)
         row.addWidget(self.collect_btn)
-
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setToolTip("Instrument and collection settings")
-        self.settings_btn.clicked.connect(self._open_settings)
-        row.addWidget(self.settings_btn)
 
         self.advanced_link = QPushButton("Advanced")
         self.advanced_link.setFlat(True)
@@ -133,7 +150,10 @@ class SimpleTopBar(QWidget):
             "QPushButton#accentButton:hover:!disabled { background-color: #3a8fe6; }"
         )
 
+        self._populate_instrument_combo()
+
         controller.connection_changed.connect(self._on_connection_changed)
+        controller.settings_changed.connect(self._on_settings_changed)
         controller.progress.connect(self._on_progress)
         controller.collect_started.connect(self._on_collect_started)
         controller.collect_finished.connect(self._on_collect_finished)
@@ -159,6 +179,32 @@ class SimpleTopBar(QWidget):
         else:
             self._refresh_idle_ui()
 
+    # -- instrument picker --------------------------------------------------------------
+
+    def _populate_instrument_combo(self) -> None:
+        names = self.controller.driver_display_names()
+        self.instrument_combo.blockSignals(True)
+        self.instrument_combo.clear()
+        for driver_id in self.controller.available_drivers():
+            self.instrument_combo.addItem(names.get(driver_id, driver_id), driver_id)
+        idx = self.instrument_combo.findData(self.controller.driver_id)
+        if idx >= 0:
+            self.instrument_combo.setCurrentIndex(idx)
+        self.instrument_combo.blockSignals(False)
+        self._update_sim_sample_visibility()
+
+    def _update_sim_sample_visibility(self) -> None:
+        self.sim_sample_combo.setVisible(self.instrument_combo.currentData() == "simulated")
+
+    def _on_instrument_combo_changed(self, _index: int) -> None:
+        driver_id = self.instrument_combo.currentData()
+        self._update_sim_sample_visibility()
+        if driver_id:
+            self.controller.set_driver(driver_id)
+
+    def _on_sim_sample_changed(self, name: str) -> None:
+        self.controller.set_sim_sample(name)
+
     # -- status pill / connect --------------------------------------------------------
 
     def _set_pill(self, text: str, state: str) -> None:
@@ -166,16 +212,19 @@ class SimpleTopBar(QWidget):
         bg, fg = _PILL_COLORS[state]
         self.pill.setStyleSheet(_PILL_STYLE.format(bg=bg, fg=fg))
 
-    def _on_pill_clicked(self) -> None:
-        if self.controller.busy or self.controller.connected:
+    def _on_connect_clicked(self) -> None:
+        if self.controller.busy:
+            return
+        if self.controller.connected:
+            self.controller.disconnect_instrument()
             return
         self._try_connect()
 
     def _try_connect(self) -> None:
         if not self.controller.available_drivers():
-            self._open_settings()
             return
         self._set_pill("Connecting…", "busy")
+        self.connect_btn.setEnabled(False)
         self.controller.connect_instrument()
 
     def _on_connection_changed(self, connected: bool, _info) -> None:
@@ -188,12 +237,27 @@ class SimpleTopBar(QWidget):
         if self._active and not self.controller.busy:
             self._refresh_idle_ui()
 
+    def _on_settings_changed(self) -> None:
+        if not self._active:
+            return
+        idx = self.instrument_combo.findData(self.controller.driver_id)
+        if idx >= 0 and idx != self.instrument_combo.currentIndex():
+            self.instrument_combo.blockSignals(True)
+            self.instrument_combo.setCurrentIndex(idx)
+            self.instrument_combo.blockSignals(False)
+            self._update_sim_sample_visibility()
+
     def _refresh_idle_ui(self) -> None:
         connected = self.controller.connected
+        info = self.controller.info
         if connected:
-            self._set_pill(f"{self.controller.driver_id.capitalize()} connected", "connected")
+            model = info.model if info is not None else self.controller.driver_id
+            self._set_pill(f"Connected · {model}", "connected")
         else:
             self._set_pill("Not connected", "disconnected")
+        self.connect_btn.setText("Disconnect" if connected else "Connect")
+        self.connect_btn.setEnabled(True)
+        self.instrument_combo.setEnabled(not connected)
         self.collect_btn.setEnabled(connected)
         self.background_btn.setEnabled(True)
         self.background_btn.setText("Background")
@@ -234,6 +298,8 @@ class SimpleTopBar(QWidget):
             self.collect_btn.setText("Cancel")
             self.collect_btn.setEnabled(True)
             self.background_btn.setEnabled(False)
+        self.connect_btn.setEnabled(False)
+        self.instrument_combo.setEnabled(False)
         self._set_pill("Collecting…", "busy")
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, max(self.controller.scans, 1))
@@ -278,7 +344,8 @@ class SimpleTopBar(QWidget):
 
     # -- settings -------------------------------------------------------------------------
 
-    def _open_settings(self) -> None:
+    def open_settings_dialog(self) -> None:
+        """Used by SimpleSettingsStrip's "More settings..." button."""
         dialog = SimpleSettingsDialog(
             self.controller,
             self._get_auto_label,
@@ -288,6 +355,142 @@ class SimpleTopBar(QWidget):
             parent=self,
         )
         dialog.exec()
+
+
+class SimpleSettingsStrip(QWidget):
+    """Row 2: a compact, always-visible, inline-editable strip of the
+    acquisition settings a user actually tweaks often (scans, resolution,
+    range, format) plus the background's age and a "More settings..."
+    button for everything else (apodization, diagnostics, background
+    save/load, auto peak-labelling thresholds -- see
+    ``openftir.gui.dialogs.simple_settings_dialog``).
+
+    A thin view over the shared CollectController, exactly like the top
+    bar -- see that class's docstring.
+    """
+
+    def __init__(self, controller: CollectController, top_bar: SimpleTopBar, parent=None):
+        super().__init__(parent)
+        self.controller = controller
+        self._top_bar = top_bar
+        self._active = True
+
+        self.setAutoFillBackground(True)
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 2, 14, 8)
+        row.setSpacing(10)
+
+        row.addWidget(QLabel("Scans:"))
+        self.scans_spin = QSpinBox()
+        self.scans_spin.setRange(1, 10000)
+        self.scans_spin.setValue(DEFAULT_SCANS)
+        self.scans_spin.valueChanged.connect(lambda v: controller.update_params(scans=v))
+        row.addWidget(self.scans_spin)
+
+        row.addWidget(QLabel("Resolution:"))
+        self.resolution_combo = QComboBox()
+        self._set_resolutions((4.0, 8.0, 16.0, 2.0), default=4.0)
+        self.resolution_combo.currentIndexChanged.connect(self._on_resolution_combo_changed)
+        row.addWidget(self.resolution_combo)
+
+        row.addWidget(QLabel("Range:"))
+        self.x_min_spin = QDoubleSpinBox()
+        self.x_min_spin.setRange(0, 20000)
+        self.x_min_spin.setDecimals(0)
+        self.x_min_spin.setValue(controller.x_min)
+        self.x_min_spin.valueChanged.connect(lambda v: controller.update_params(x_min=v))
+        row.addWidget(self.x_min_spin)
+        row.addWidget(QLabel("to"))
+        self.x_max_spin = QDoubleSpinBox()
+        self.x_max_spin.setRange(0, 20000)
+        self.x_max_spin.setDecimals(0)
+        self.x_max_spin.setValue(controller.x_max)
+        self.x_max_spin.valueChanged.connect(lambda v: controller.update_params(x_max=v))
+        row.addWidget(self.x_max_spin)
+
+        row.addWidget(QLabel("Format:"))
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(list(FORMATS))
+        self.format_combo.currentTextChanged.connect(lambda t: controller.update_params(final_format=t))
+        row.addWidget(self.format_combo)
+
+        row.addStretch(1)
+
+        self.background_label = QLabel("No background")
+        row.addWidget(self.background_label)
+
+        self.more_settings_btn = QPushButton("More settings…")
+        self.more_settings_btn.clicked.connect(top_bar.open_settings_dialog)
+        row.addWidget(self.more_settings_btn)
+
+        controller.settings_changed.connect(self._refresh_settings_ui)
+        controller.background_changed.connect(self._update_background_label)
+
+        self._age_timer = QTimer(self)
+        self._age_timer.setInterval(30_000)
+        self._age_timer.timeout.connect(self._update_background_label)
+        self._age_timer.start()
+
+        self._refresh_settings_ui()
+        self._update_background_label()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(900, 34)
+
+    def set_active(self, active: bool) -> None:
+        self._active = active
+        if active:
+            self._refresh_settings_ui()
+            self._update_background_label()
+
+    # -- settings refresh ---------------------------------------------------------------
+
+    def _set_resolutions(self, resolutions: tuple[float, ...], default: float) -> None:
+        self.resolution_combo.blockSignals(True)
+        self.resolution_combo.clear()
+        for r in resolutions:
+            self.resolution_combo.addItem(f"{r:g}", r)
+        idx = self.resolution_combo.findData(default)
+        if idx >= 0:
+            self.resolution_combo.setCurrentIndex(idx)
+        self.resolution_combo.blockSignals(False)
+
+    def _on_resolution_combo_changed(self, _index: int) -> None:
+        value = self.resolution_combo.currentData()
+        if value is not None:
+            self.controller.update_params(resolution=float(value))
+
+    def _refresh_settings_ui(self) -> None:
+        if not self._active:
+            return
+        c = self.controller
+        widgets = (self.scans_spin, self.resolution_combo, self.x_min_spin, self.x_max_spin, self.format_combo)
+        for w in widgets:
+            w.blockSignals(True)
+        try:
+            self.scans_spin.setValue(c.scans)
+            self._set_resolutions(c.resolutions, c.resolution)
+            self.x_min_spin.setValue(c.x_min)
+            self.x_max_spin.setValue(c.x_max)
+            idx = self.format_combo.findText(c.final_format)
+            if idx >= 0:
+                self.format_combo.setCurrentIndex(idx)
+        finally:
+            for w in widgets:
+                w.blockSignals(False)
+
+    # -- background age -------------------------------------------------------------------
+
+    def _update_background_label(self) -> None:
+        minutes = self.controller.background_age_minutes()
+        if minutes is None:
+            self.background_label.setText("No background")
+            self.background_label.setStyleSheet("color: #777777;")
+            return
+        self.background_label.setText(f"Background: {minutes} min")
+        stale = self.controller.background_is_stale()
+        self.background_label.setStyleSheet("color: #c0392b; font-weight: 600;" if stale else "color: #666666;")
 
 
 class SpectrumChip(QFrame):

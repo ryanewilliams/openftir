@@ -101,6 +101,15 @@ class CollectController(QObject):
     def available_drivers(self) -> list[str]:
         return sorted(registry.available_drivers())
 
+    def driver_display_names(self) -> dict[str, str]:
+        """``{driver_id: human-readable name}`` for every available driver,
+        e.g. for an instrument-selection dropdown. Falls back to the id
+        itself (title-cased) if a driver leaves ``display_name`` empty."""
+        return {
+            driver_id: (cls.display_name or driver_id.capitalize())
+            for driver_id, cls in registry.available_drivers().items()
+        }
+
     @property
     def connected(self) -> bool:
         return self._instrument is not None and self._info is not None

@@ -90,6 +90,19 @@ _DEFAULT_AUTO_LABEL_PARAMS: dict = {
     "min_distance_cm": 15.0,
 }
 
+#: %T/%R-like units: manual/auto markers point down into a dip; absorbance
+#: points up out of a peak. Anything else (single beam, interferogram, ...)
+#: never gets a manual-peak marker -- see SpectrumPlotWidget.refresh.
+_DOWN_UNITS = (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE)
+_UP_UNITS = (YUnit.ABSORBANCE,)
+
+#: manual peaks are drawn slightly larger/bolder than auto-labelled ones --
+#: they're a deliberate pick, not an algorithm's guess (see refresh()).
+_MANUAL_LABEL_MARKER_SIZE = 8
+#: auto labels within this many cm-1 of a manual pick are dropped (the
+#: manual one wins) -- see refresh().
+_MANUAL_LABEL_COLLISION_CM = 4.0
+
 
 def _cosmetic_pen(*args, **kwargs):
     """``pg.mkPen`` with cosmetic width (device pixels, never scaled)."""
@@ -98,11 +111,23 @@ def _cosmetic_pen(*args, **kwargs):
     return pen
 
 
+def _nearest_value(x: np.ndarray, y: np.ndarray, position: float) -> float | None:
+    """``y`` at the data point in ``x`` closest to ``position`` -- used to
+    look up a manual peak's plotted height from its stored position alone."""
+    if x.size == 0:
+        return None
+    idx = int(np.argmin(np.abs(x - position)))
+    return float(y[idx])
+
+
 class SpectrumPlotWidget(QWidget):
     """Overlay/stack plot of the currently loaded spectra."""
 
     #: emitted on mouse movement over the plot, in data coordinates (x, y)
     cursor_moved = Signal(float, float)
+    #: emitted on a left click while pick-peaks mode is on, in data
+    #: coordinates (x, y) -- see set_pick_mode()/MainWindow._on_plot_pick.
+    pick_requested = Signal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,6 +142,7 @@ class SpectrumPlotWidget(QWidget):
         self._auto_label_enabled = True
         self._auto_label_params: dict = dict(_DEFAULT_AUTO_LABEL_PARAMS)
         self._auto_label_items: list[pg.GraphicsObject] = []
+        self._pick_mode = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -150,6 +176,7 @@ class SpectrumPlotWidget(QWidget):
         self.plot_item.addItem(self._hline, ignoreBounds=True)
 
         self.plot_widget.scene().sigMouseMoved.connect(self._on_mouse_moved)
+        self.plot_widget.scene().sigMouseClicked.connect(self._on_scene_clicked)
 
         self._apply_fixed_colors()
 
@@ -181,6 +208,33 @@ class SpectrumPlotWidget(QWidget):
         self._vline.setVisible(True)
         self._hline.setVisible(True)
         self.cursor_moved.emit(x, y)
+
+    # -- pick-peaks mode ----------------------------------------------------------
+
+    def set_pick_mode(self, enabled: bool) -> None:
+        """Toggle manual peak-picking mode: while on, the cursor becomes a
+        crosshair and a left click emits ``pick_requested`` in data
+        coordinates (see MainWindow._on_plot_pick for the actual snap/add/
+        remove logic -- this widget only handles the mouse/cursor side)."""
+        self._pick_mode = enabled
+        self.plot_widget.viewport().setCursor(Qt.CrossCursor if enabled else Qt.ArrowCursor)
+
+    def pick_mode(self) -> bool:
+        return self._pick_mode
+
+    def pixel_size(self) -> tuple[float, float]:
+        """``(x, y)`` size of one screen pixel in data units, for converting
+        a pixel tolerance (e.g. "within 12 px") to a data-space window."""
+        return self.plot_item.vb.viewPixelSize()
+
+    def _on_scene_clicked(self, event) -> None:
+        if not self._pick_mode or event.button() != Qt.LeftButton:
+            return
+        scene_pos = event.scenePos()
+        if not self.plot_item.sceneBoundingRect().contains(scene_pos):
+            return
+        point = self.plot_item.vb.mapSceneToView(scene_pos)
+        self.pick_requested.emit(point.x(), point.y())
 
     # -- view control -----------------------------------------------------------
 
@@ -248,10 +302,13 @@ class SpectrumPlotWidget(QWidget):
             for k in range(len(visible)):
                 offsets[k] = k * gap
 
-        # (position, value, down, color) candidates for auto-labelling,
+        # (position, value, down, color, manual) candidates for labelling,
         # gathered across every visible trace and placed in one pass below
         # so overlap avoidance works across spectra, not just within one.
-        label_candidates: list[tuple[float, float, bool, QColor]] = []
+        # Manual picks are always included (even with auto-labels off);
+        # auto candidates are dropped when they coincide with a manual one
+        # -- see _place_auto_labels for the priority rule.
+        label_candidates: list[tuple[float, float, bool, QColor, bool]] = []
 
         for k, (row, entry) in enumerate(visible):
             s = entry.spectrum
@@ -267,14 +324,23 @@ class SpectrumPlotWidget(QWidget):
             curve = self.plot_item.plot(s.x, y, pen=pen, name=entry.name, autoDownsample=True)
             self._curves.append(curve)
 
+            down = s.y_unit in _DOWN_UNITS
+            manual_positions = list(entry.manual_peaks) if s.y_unit in (*_DOWN_UNITS, *_UP_UNITS) else []
+            for position in manual_positions:
+                value = _nearest_value(s.x, s.y, position)
+                if value is None:
+                    continue
+                label_candidates.append((position, value + offset, down, entry.color, True))
+
             if self._auto_label_enabled:
                 try:
                     peaks = auto_label_peaks(s, **self._auto_label_params)
                 except ValueError:
                     peaks = []  # single-beam/interferogram/etc. -- never labelled
-                down = s.y_unit in (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE)
                 for p in peaks:
-                    label_candidates.append((p.position, p.height + offset, down, entry.color))
+                    if any(abs(p.position - m) <= _MANUAL_LABEL_COLLISION_CM for m in manual_positions):
+                        continue  # a manual pick already marks this band
+                    label_candidates.append((p.position, p.height + offset, down, entry.color, False))
 
         if label_candidates:
             self._reserve_label_headroom(visible, offsets, label_candidates)
@@ -299,9 +365,9 @@ class SpectrumPlotWidget(QWidget):
         pad = (y_max - y_min or 1.0) * _AUTO_LABEL_HEADROOM_FRACTION
         x_mid = float(np.mean([c[0] for c in label_candidates]))
         pts = []
-        if any(down for _, _, down, _ in label_candidates):
+        if any(down for _, _, down, _, _ in label_candidates):
             pts.append(y_min - pad)
-        if any(not down for _, _, down, _ in label_candidates):
+        if any(not down for _, _, down, _, _ in label_candidates):
             pts.append(y_max + pad)
         spacer = pg.ScatterPlotItem(
             x=[x_mid] * len(pts), y=pts, size=1, brush=pg.mkBrush(0, 0, 0, 0), pen=pg.mkPen(None)
@@ -361,15 +427,20 @@ class SpectrumPlotWidget(QWidget):
             self.plot_item.removeItem(item)
         self._auto_label_items.clear()
 
-    def _place_auto_labels(self, candidates: list[tuple[float, float, bool, QColor]]) -> None:
+    def _place_auto_labels(self, candidates: list[tuple[float, float, bool, QColor, bool]]) -> None:
         """Greedily place a marker + integer wavenumber label per candidate.
 
-        Candidates are processed strongest (deepest dip / tallest peak)
-        first, skipping any whose position falls within
+        Candidates are processed manual-first, then strongest (deepest dip /
+        tallest peak) first, skipping any whose position falls within
         ``_AUTO_LABEL_MIN_X_GAP_FRACTION`` of an already-placed label -- a
         simple way to avoid two labels overlapping when their peaks sit
         close together, while keeping the more significant band of the
         pair rather than whichever happens to come first left-to-right.
+        Manual picks are highest priority: an auto candidate that would
+        overlap one is dropped entirely (marker + label), but a manual
+        candidate's *marker* is always drawn even if its text label would
+        overlap another already-placed label (only the text is skipped
+        then) -- manual peaks are never silently hidden.
         Label positions are clamped inside the current view so they never
         overlap the plot frame, and the items are added with
         ``ignoreBounds=True`` so they never affect autorange.
@@ -387,12 +458,14 @@ class SpectrumPlotWidget(QWidget):
 
         font = QFont()
         font.setPointSize(_AUTO_LABEL_FONT_PT)
+        bold_font = QFont(font)
+        bold_font.setBold(True)
 
         # Depth/height below-100 or above-0 as a proxy for how significant a
         # band is, so a conflict between two close peaks keeps the deeper
         # (more important) one rather than whichever sorts first in x.
-        def _significance(c: tuple[float, float, bool, QColor]) -> float:
-            _position, value, down, _color = c
+        def _significance(c: tuple[float, float, bool, QColor, bool]) -> float:
+            _position, value, down, _color, _manual = c
             return (100.0 - value) if down else value
 
         # Overlap test in real label extents: measure the text in pixels and
@@ -403,33 +476,41 @@ class SpectrumPlotWidget(QWidget):
         text_h = (metrics.height() + 2) * px_h
 
         placed: list[tuple[float, float, float]] = []  # (x, y, half width)
-        ordered = sorted(candidates, key=lambda c: (-_significance(c), c[0]))
-        for position, value, down, color in ordered:
+        # Manual picks always sort before auto ones -- see the docstring.
+        ordered = sorted(candidates, key=lambda c: (0 if c[4] else 1, -_significance(c), c[0]))
+        for position, value, down, color, manual in ordered:
             label_y_raw = value - y_offset if down else value + y_offset
             half_w = (metrics.horizontalAdvance(str(int(round(position)))) / 2 + 3) * px_w
-            if any(
+            conflict = any(
                 abs(position - px) < max(half_w + pw, min_x_gap) and abs(label_y_raw - py) < max(text_h, min_y_gap)
                 for px, py, pw in placed
-            ):
+            )
+            if conflict and not manual:
                 continue
-            placed.append((position, label_y_raw, half_w))
+            if not conflict:
+                placed.append((position, label_y_raw, half_w))
 
             label_y = min(max(label_y_raw, y_lo + y_margin), y_hi - y_margin)
             label_x = min(max(position, x_lo + x_margin), x_hi - x_margin)
 
+            marker_symbol = ("t" if down else "t1") if manual else "o"
+            marker_size = _MANUAL_LABEL_MARKER_SIZE if manual else _AUTO_LABEL_MARKER_SIZE
             marker = pg.ScatterPlotItem(
-                x=[position], y=[value], symbol="o", size=_AUTO_LABEL_MARKER_SIZE,
+                x=[position], y=[value], symbol=marker_symbol, size=marker_size,
                 brush=pg.mkBrush(color), pen=pg.mkPen(None),
             )
             self.plot_item.addItem(marker, ignoreBounds=True)
             self._auto_label_items.append(marker)
+
+            if conflict and manual:
+                continue  # marker shown either way; only the overlapping text is skipped
 
             text = pg.TextItem(
                 text=str(int(round(position))),
                 color=color,
                 anchor=(0.5, 0.0) if down else (0.5, 1.0),
             )
-            text.setFont(font)
+            text.setFont(bold_font if manual else font)
             text.setPos(label_x, label_y)
             self.plot_item.addItem(text, ignoreBounds=True)
             self._auto_label_items.append(text)

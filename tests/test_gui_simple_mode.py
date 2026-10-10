@@ -6,6 +6,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import QSettings
 
 from openftir.gui.dialogs.simple_settings_dialog import SimpleSettingsDialog
@@ -108,7 +109,9 @@ def test_simple_mode_cancel_restores_buttons(qtbot):
     assert controller.background is None
 
 
-def test_pill_click_connects(qtbot):
+def test_connect_button_toggles_connect_disconnect(qtbot):
+    """Row 1's explicit Connect button (not just a clickable pill) connects
+    the selected instrument and turns into Disconnect once connected."""
     window = MainWindow()
     qtbot.addWidget(window)
     window._apply_mode("simple")
@@ -118,12 +121,42 @@ def test_pill_click_connects(qtbot):
     top_bar = window.simple_top_bar
 
     assert controller.connected is False
+    assert top_bar.connect_btn.text() == "Connect"
     with qtbot.waitSignal(controller.connection_changed, timeout=5000):
-        top_bar.pill.click()
+        top_bar.connect_btn.click()
     assert controller.connected is True
+    assert top_bar.connect_btn.text() == "Disconnect"
+    assert "Connected" in top_bar.pill.text()
+
+    with qtbot.waitSignal(controller.connection_changed, timeout=5000):
+        top_bar.connect_btn.click()
+    assert controller.connected is False
+    assert top_bar.connect_btn.text() == "Connect"
+    assert top_bar.pill.text() == "Not connected"
 
 
-def test_settings_dialog_changes_persist(qtbot):
+def test_instrument_combo_lists_drivers_by_display_name(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._apply_mode("simple")
+    window.show()  # isVisible() is only meaningful once the widget is shown
+
+    top_bar = window.simple_top_bar
+    names = window.collect_controller.driver_display_names()
+    combo_texts = {top_bar.instrument_combo.itemText(i) for i in range(top_bar.instrument_combo.count())}
+    assert combo_texts == set(names.values())
+    # The simulated sample selector only shows for the simulated driver.
+    idx = top_bar.instrument_combo.findData("simulated")
+    top_bar.instrument_combo.setCurrentIndex(idx)
+    assert top_bar.sim_sample_combo.isVisible() is True
+
+
+def test_settings_dialog_apodization_changes_persist(qtbot):
+    """The trimmed "More settings..." dialog (apodization, diagnostics,
+    background save/load, auto-label thresholds -- scans/resolution/range/
+    format now live in the Row 2 settings strip, see
+    test_settings_strip_updates_controller_and_persists) still writes
+    straight through to the controller."""
     settings = QSettings(*_SETTINGS_ARGS)
     settings.remove("collect/simulated")
 
@@ -141,20 +174,86 @@ def test_settings_dialog_changes_persist(qtbot):
     )
     qtbot.addWidget(dialog)
 
-    dialog.scans_spin.setValue(42)
-    idx = dialog.format_combo.findText("Absorbance")
-    dialog.format_combo.setCurrentIndex(idx)
-
-    assert controller.scans == 42
-    assert controller.final_format == "Absorbance"
+    idx = dialog.apodization_combo.findText("boxcar")
+    dialog.apodization_combo.setCurrentIndex(idx)
+    assert controller.apodization == "boxcar"
 
     # Persisted immediately (no Ok button to click) -- a fresh controller
-    # restores the same values for this driver.
+    # restores the same value for this driver.
+    from openftir.gui.collect_controller import CollectController
+
+    controller2 = CollectController()
+    controller2.set_driver("simulated")
+    assert controller2.apodization == "boxcar"
+
+    settings.remove("collect/simulated")
+
+
+def test_settings_strip_updates_controller_and_persists(qtbot):
+    """Row 2's settings strip edits (Scans/Resolution/Range/Format) write
+    straight through to the controller and persist per driver, same as the
+    old dialog fields they replaced."""
+    settings = QSettings(*_SETTINGS_ARGS)
+    settings.remove("collect/simulated")
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = window.collect_controller
+    controller.set_driver("simulated")
+
+    strip = window.simple_settings_strip
+    strip.scans_spin.setValue(42)
+    strip.x_min_spin.setValue(700.0)
+    strip.x_max_spin.setValue(3800.0)
+    idx = strip.format_combo.findText("Absorbance")
+    strip.format_combo.setCurrentIndex(idx)
+    idx = strip.resolution_combo.findData(8.0)
+    strip.resolution_combo.setCurrentIndex(idx)
+
+    assert controller.scans == 42
+    assert controller.x_min == pytest.approx(700.0)
+    assert controller.x_max == pytest.approx(3800.0)
+    assert controller.final_format == "Absorbance"
+    assert controller.resolution == pytest.approx(8.0)
+
     from openftir.gui.collect_controller import CollectController
 
     controller2 = CollectController()
     controller2.set_driver("simulated")
     assert controller2.scans == 42
+    assert controller2.x_min == pytest.approx(700.0)
+    assert controller2.x_max == pytest.approx(3800.0)
     assert controller2.final_format == "Absorbance"
+    assert controller2.resolution == pytest.approx(8.0)
 
     settings.remove("collect/simulated")
+
+
+def test_settings_strip_resolution_options_come_from_connected_instrument(qtbot):
+    """The resolution combo is sourced from the connected instrument's
+    InstrumentInfo.resolutions (not a hardcoded list)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    controller = window.collect_controller
+    strip = window.simple_settings_strip
+    _connect_simulated(qtbot, controller)
+
+    combo_values = [strip.resolution_combo.itemData(i) for i in range(strip.resolution_combo.count())]
+    assert combo_values == list(controller.info.resolutions)
+    assert combo_values == list(controller.resolutions)
+
+
+def test_more_settings_button_opens_trimmed_dialog(qtbot, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    opened = []
+    monkeypatch.setattr(SimpleSettingsDialog, "exec", lambda self: opened.append(self) or 1)
+    window.simple_settings_strip.more_settings_btn.click()
+    assert len(opened) == 1
+    # Scans/resolution/range/format moved to the strip -- no longer here.
+    assert not hasattr(opened[0], "scans_spin")
+    assert not hasattr(opened[0], "format_combo")
+    assert hasattr(opened[0], "apodization_combo")
+    assert hasattr(opened[0], "diagnostics_btn")

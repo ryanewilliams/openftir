@@ -1,13 +1,14 @@
-"""Simple mode's gear-icon settings dialog: a compact superset of Advanced
-mode's Collect dock (driver + acquisition settings) plus the auto peak
-labelling controls that live in Advanced mode's View menu. No processing
-tools here -- those stay in Advanced mode / the Process menu.
+"""Simple mode's "More settings..." dialog: whatever doesn't fit in the top
+bar's instrument row or the settings strip (Scans/Resolution/Range/Format --
+see ``openftir.gui.simple_panels.SimpleSettingsStrip``). That leaves
+apodization, diagnostics, saving/loading a background, and the auto
+peak-labelling thresholds.
 
-Everything applies immediately (there is no Ok/Cancel): connect/disconnect
-happen right away, and every settings field writes straight through to the
-shared :class:`~openftir.gui.collect_controller.CollectController` (and, for
+Everything applies immediately (there is no Ok/Cancel): every settings field
+writes straight through to the shared
+:class:`~openftir.gui.collect_controller.CollectController` (and, for
 auto-labelling, to the callables the dialog is constructed with) via
-``update_params``/the given setters, so Advanced mode's own widgets and the
+``update_params``/the given setters, so the top bar's own widgets and the
 plot stay in sync the moment something changes here.
 """
 
@@ -27,12 +28,11 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
 )
 
 from openftir.gui import file_dialogs
-from openftir.gui.collect_controller import CollectController, FORMATS, SIMULATED_SAMPLES
+from openftir.gui.collect_controller import CollectController
 
 
 class SimpleSettingsDialog(QDialog):
@@ -53,80 +53,25 @@ class SimpleSettingsDialog(QDialog):
         self._set_peak_label_params = set_peak_label_params
 
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(340)
         layout = QVBoxLayout(self)
 
-        # -- instrument ---------------------------------------------------------
-        instrument_box = QGroupBox("Instrument")
-        form = QFormLayout(instrument_box)
-
-        self.driver_combo = QComboBox()
-        self.driver_combo.addItems(controller.available_drivers())
-        idx = self.driver_combo.findText(controller.driver_id)
-        if idx >= 0:
-            self.driver_combo.setCurrentIndex(idx)
-        self.driver_combo.currentTextChanged.connect(self._on_driver_changed)
-        form.addRow("Driver:", self.driver_combo)
-
-        self.sim_sample_combo = QComboBox()
-        self.sim_sample_combo.addItems(SIMULATED_SAMPLES)
-        idx = self.sim_sample_combo.findText(controller.sim_sample)
-        if idx >= 0:
-            self.sim_sample_combo.setCurrentIndex(idx)
-        self.sim_sample_combo.currentTextChanged.connect(controller.set_sim_sample)
-        form.addRow("Simulated sample:", self.sim_sample_combo)
-
-        conn_row = QHBoxLayout()
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.clicked.connect(controller.connect_instrument)
-        self.disconnect_btn = QPushButton("Disconnect")
-        self.disconnect_btn.clicked.connect(controller.disconnect_instrument)
-        self.diagnostics_btn = QPushButton("Diagnostics...")
-        self.diagnostics_btn.clicked.connect(controller.request_diagnostics)
-        conn_row.addWidget(self.connect_btn)
-        conn_row.addWidget(self.disconnect_btn)
-        conn_row.addWidget(self.diagnostics_btn)
-        form.addRow(conn_row)
-
-        self.status_label = QLabel()
-        form.addRow(self.status_label)
-        layout.addWidget(instrument_box)
-
-        # -- acquisition settings ------------------------------------------------
+        # -- acquisition (just what's not already in the settings strip) ---------
         settings_box = QGroupBox("Acquisition")
         settings_form = QFormLayout(settings_box)
-
-        self.scans_spin = QSpinBox()
-        self.scans_spin.setRange(1, 10000)
-        self.scans_spin.valueChanged.connect(lambda v: controller.update_params(scans=v))
-        settings_form.addRow("Scans:", self.scans_spin)
-
-        self.resolution_combo = QComboBox()
-        self.resolution_combo.currentIndexChanged.connect(self._on_resolution_changed)
-        settings_form.addRow("Resolution (cm⁻¹):", self.resolution_combo)
-
-        range_row = QHBoxLayout()
-        self.x_min_spin = QDoubleSpinBox()
-        self.x_min_spin.setRange(0, 20000)
-        self.x_min_spin.valueChanged.connect(lambda v: controller.update_params(x_min=v))
-        self.x_max_spin = QDoubleSpinBox()
-        self.x_max_spin.setRange(0, 20000)
-        self.x_max_spin.valueChanged.connect(lambda v: controller.update_params(x_max=v))
-        range_row.addWidget(self.x_min_spin)
-        range_row.addWidget(QLabel("to"))
-        range_row.addWidget(self.x_max_spin)
-        settings_form.addRow("Range (cm⁻¹):", range_row)
 
         self.apodization_combo = QComboBox()
         self.apodization_combo.addItems(["happ-genzel", "triangular", "boxcar", "blackman-harris"])
         self.apodization_combo.currentTextChanged.connect(lambda t: controller.update_params(apodization=t))
         settings_form.addRow("Apodization:", self.apodization_combo)
-
-        self.format_combo = QComboBox()
-        self.format_combo.addItems(list(FORMATS))
-        self.format_combo.currentTextChanged.connect(lambda t: controller.update_params(final_format=t))
-        settings_form.addRow("Final format:", self.format_combo)
         layout.addWidget(settings_box)
+
+        diag_row = QHBoxLayout()
+        self.diagnostics_btn = QPushButton("Diagnostics...")
+        self.diagnostics_btn.clicked.connect(controller.request_diagnostics)
+        diag_row.addWidget(self.diagnostics_btn)
+        diag_row.addStretch(1)
+        layout.addLayout(diag_row)
 
         # -- background -----------------------------------------------------------
         bg_box = QGroupBox("Background")
@@ -184,61 +129,22 @@ class SimpleSettingsDialog(QDialog):
         self._refresh_connection_ui(controller.connected, controller.info)
         self._refresh_settings_ui()
 
-    # -- driver / connection --------------------------------------------------------------
+    # -- connection -----------------------------------------------------------------
 
-    def _on_driver_changed(self, driver_id: str) -> None:
-        if driver_id:
-            self.controller.set_driver(driver_id)
-        is_simulated = driver_id == "simulated"
-        self.sim_sample_combo.setVisible(is_simulated)
-
-    def _refresh_connection_ui(self, connected: bool, info) -> None:
-        self.connect_btn.setEnabled(not connected)
-        self.disconnect_btn.setEnabled(connected)
+    def _refresh_connection_ui(self, connected: bool, _info) -> None:
         self.diagnostics_btn.setEnabled(connected)
-        if connected and info is not None:
-            self.status_label.setText(f"Connected: {info.vendor} {info.model}")
-        else:
-            self.status_label.setText("Not connected")
 
     # -- acquisition settings --------------------------------------------------------------
 
-    def _on_resolution_changed(self, _index: int) -> None:
-        value = self.resolution_combo.currentData()
-        if value is not None:
-            self.controller.update_params(resolution=float(value))
-
     def _refresh_settings_ui(self) -> None:
         c = self.controller
-        widgets = (
-            self.scans_spin,
-            self.resolution_combo,
-            self.x_min_spin,
-            self.x_max_spin,
-            self.apodization_combo,
-            self.format_combo,
-        )
-        for w in widgets:
-            w.blockSignals(True)
+        self.apodization_combo.blockSignals(True)
         try:
-            self.scans_spin.setValue(c.scans)
-            self.resolution_combo.clear()
-            for r in c.resolutions:
-                self.resolution_combo.addItem(f"{r:g}", r)
-            idx = self.resolution_combo.findData(c.resolution)
-            if idx >= 0:
-                self.resolution_combo.setCurrentIndex(idx)
-            self.x_min_spin.setValue(c.x_min)
-            self.x_max_spin.setValue(c.x_max)
             idx = self.apodization_combo.findText(c.apodization)
             if idx >= 0:
                 self.apodization_combo.setCurrentIndex(idx)
-            idx = self.format_combo.findText(c.final_format)
-            if idx >= 0:
-                self.format_combo.setCurrentIndex(idx)
         finally:
-            for w in widgets:
-                w.blockSignals(False)
+            self.apodization_combo.blockSignals(False)
 
     # -- background -----------------------------------------------------------------------
 

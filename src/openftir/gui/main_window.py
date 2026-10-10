@@ -19,12 +19,14 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QRect, QSettings, QSize, Qt
-from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
     QDockWidget,
+    QHBoxLayout,
     QInputDialog,
+    QLabel,
     QListView,
     QMainWindow,
     QMenu,
@@ -32,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QToolBar,
+    QToolButton,
     QSizePolicy,
     QTabWidget,
     QVBoxLayout,
@@ -59,8 +62,9 @@ from openftir.gui.dialogs import (
 from openftir.gui.library_panel import LibraryPanel
 from openftir.gui.peaks_panel import PeaksPanel
 from openftir.gui.plot import SpectrumPlotWidget
-from openftir.gui.simple_panels import SimpleBottomBar, SimpleTopBar
+from openftir.gui.simple_panels import SimpleBottomBar, SimpleSettingsStrip, SimpleTopBar
 from openftir.gui.spectrum_list import ColorRole, SpectrumListModel
+from openftir.processing import Peak
 
 _MAX_RECENT_FILES = 10
 _BASELINE_METHODS = {
@@ -148,31 +152,121 @@ class _CentralArea(QWidget):
         self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
 
 
-class _SimpleCentralArea(QWidget):
-    """Simple mode's central widget: top bar, plot (16:9), bottom bar."""
+class _SimplePlotToolbar(QWidget):
+    """The slim row of flat buttons above the plot in Simple mode: Pick
+    peaks / Auto labels (both mirror a shared QAction so Advanced mode's
+    own menu/toolbar entries -- see MainWindow._build_menus -- always agree
+    on the checked state) and Clear picks."""
 
-    def __init__(self, plot_container: _PlotAspectContainer, top_bar: QWidget, bottom_bar: QWidget, parent=None):
+    def __init__(self, pick_peaks_action: QAction, auto_label_action: QAction, clear_action: QAction, parent=None):
+        super().__init__(parent)
+        self.setAutoFillBackground(True)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 2, 14, 2)
+        row.setSpacing(4)
+
+        for action in (pick_peaks_action, auto_label_action):
+            btn = QToolButton(self)
+            btn.setDefaultAction(action)
+            btn.setAutoRaise(True)
+            btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            row.addWidget(btn)
+
+        # Its own button text ("Clear picks", matching the spec's Simple-mode
+        # wording) rather than setDefaultAction's auto-synced "Clear manual
+        # peaks" (used in Advanced mode's Process menu/toolbar) -- same
+        # action, triggered the same way, just a shorter label here.
+        clear_btn = QToolButton(self)
+        clear_btn.setText("Clear picks")
+        clear_btn.setToolTip(clear_action.toolTip())
+        clear_btn.setAutoRaise(True)
+        clear_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        clear_btn.clicked.connect(clear_action.trigger)
+        row.addWidget(clear_btn)
+
+        row.addStretch(1)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(900, 26)
+
+
+class _PeaksSidePanel(QWidget):
+    """Simple mode's ~260 px right-hand "Peaks" panel: a title + the shared
+    PeaksPanel table/copy-button widget (a second instance from Advanced
+    mode's own Peaks tab -- both are kept in sync, see
+    MainWindow._refresh_peaks_panel)."""
+
+    WIDTH = 260
+
+    def __init__(self, peaks_panel: QWidget, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(self.WIDTH)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 14, 0)
+        layout.setSpacing(4)
+
+        title = QLabel("Peaks")
+        title.setStyleSheet("font-weight: 600; color: #444444;")
+        layout.addWidget(title)
+        layout.addWidget(peaks_panel, 1)
+
+
+class _SimpleCentralArea(QWidget):
+    """Simple mode's central widget: top bar, settings strip, the slim
+    plot-toolbar row, plot (16:9) + Peaks side panel, bottom bar."""
+
+    def __init__(
+        self,
+        plot_container: _PlotAspectContainer,
+        top_bar: QWidget,
+        settings_strip: QWidget,
+        plot_toolbar: QWidget,
+        peaks_side_panel: QWidget,
+        bottom_bar: QWidget,
+        parent=None,
+    ):
         super().__init__(parent)
         self.plot_container = plot_container
         self.top_bar = top_bar
+        self.settings_strip = settings_strip
+        self.plot_toolbar = plot_toolbar
+        self.peaks_side_panel = peaks_side_panel
         self.bottom_bar = bottom_bar
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(top_bar, 0)
-        layout.addWidget(plot_container, 0)
+        layout.addWidget(settings_strip, 0)
+        layout.addWidget(plot_toolbar, 0)
+
+        self._body = QWidget(self)
+        self._body_layout = QHBoxLayout(self._body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(0)
+        self._body_layout.addWidget(plot_container, 1)
+        self._body_layout.addWidget(peaks_side_panel, 0)
+        layout.addWidget(self._body, 1)
+
         layout.addWidget(bottom_bar, 0)
 
     def activate(self) -> None:
         """Reclaim the shared plot container into this layout (it may
         currently be living inside Advanced mode's central widget)."""
-        self.layout().insertWidget(1, self.plot_container)
+        self._body_layout.insertWidget(0, self.plot_container)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        reserved = self.top_bar.sizeHint().height() + self.bottom_bar.sizeHint().height()
+        reserved = (
+            self.top_bar.sizeHint().height()
+            + self.settings_strip.sizeHint().height()
+            + self.plot_toolbar.sizeHint().height()
+            + self.bottom_bar.sizeHint().height()
+        )
         max_plot_h = max(self.height() - reserved, 160)
-        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
+        available_w = max(self.width() - self.peaks_side_panel.width(), 160)
+        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(available_w), max_plot_h))
 
 
 class MainWindow(QMainWindow):
@@ -200,8 +294,15 @@ class MainWindow(QMainWindow):
 
         self.plot = SpectrumPlotWidget(self)
         self.plot.cursor_moved.connect(self._on_cursor_moved)
+        self.plot.pick_requested.connect(self._on_plot_pick)
         self.details_panel = DetailsPanel()
         self.peaks_panel = PeaksPanel()
+        self.peaks_panel.remove_requested.connect(self._on_remove_manual_peak)
+        # Simple mode's own ~260px side panel -- see _PeaksSidePanel below --
+        # is a second, independent PeaksPanel instance kept in sync with
+        # this one (both show the same selected spectrum's peaks).
+        self.simple_peaks_panel = PeaksPanel()
+        self.simple_peaks_panel.remove_requested.connect(self._on_remove_manual_peak)
 
         # One instrument/collection state, shared by Advanced mode's Collect
         # dock and Simple mode's top bar -- see collect_controller.py.
@@ -241,7 +342,21 @@ class MainWindow(QMainWindow):
         self.simple_bottom_bar.open_requested.connect(self._on_open)
         self.simple_bottom_bar.export_requested.connect(self._on_save_selected)
 
-        self._simple_central = _SimpleCentralArea(plot_container, self.simple_top_bar, self.simple_bottom_bar, self)
+        self.simple_settings_strip = SimpleSettingsStrip(self.collect_controller, self.simple_top_bar, self)
+        self.simple_plot_toolbar = _SimplePlotToolbar(
+            self.pick_peaks_action, self.auto_label_action, self.clear_manual_peaks_action, self
+        )
+        self.simple_peaks_side_panel = _PeaksSidePanel(self.simple_peaks_panel, self)
+
+        self._simple_central = _SimpleCentralArea(
+            plot_container,
+            self.simple_top_bar,
+            self.simple_settings_strip,
+            self.simple_plot_toolbar,
+            self.simple_peaks_side_panel,
+            self.simple_bottom_bar,
+            self,
+        )
 
         self._stack = QStackedWidget(self)
         self._stack.addWidget(self._central)
@@ -327,6 +442,31 @@ class MainWindow(QMainWindow):
         self.stack_action.toggled.connect(self._on_stack_toggled)
         toolbar.addAction(self.stack_action)
 
+        # Manual peak picking (click-to-add/remove on the plot): one shared
+        # checkable action so Simple mode's plot toolbar, this toolbar and
+        # the Process menu (see _build_menus) always agree on the state --
+        # see openftir.gui.plot.SpectrumPlotWidget.set_pick_mode and
+        # MainWindow._on_plot_pick.
+        toolbar.addSeparator()
+        self.pick_peaks_action = QAction("Pick peaks", self)
+        self.pick_peaks_action.setCheckable(True)
+        self.pick_peaks_action.setShortcut("P")
+        self.pick_peaks_action.setToolTip("Click the plot to add or remove a manual peak (P)")
+        self.pick_peaks_action.toggled.connect(self._on_pick_peaks_toggled)
+        toolbar.addAction(self.pick_peaks_action)
+
+        self.clear_manual_peaks_action = QAction("Clear manual peaks", self)
+        self.clear_manual_peaks_action.setToolTip("Clear manual peaks of the selected spectrum")
+        self.clear_manual_peaks_action.triggered.connect(self._on_clear_manual_peaks)
+        toolbar.addAction(self.clear_manual_peaks_action)
+
+        # Escape always leaves pick mode while this window (not some modal
+        # dialog, which gets its own Escape-to-close behaviour) is active,
+        # even if some other widget -- a spin box, the spectrum list -- has
+        # focus. QShortcut's default context (WindowShortcut) gives us that.
+        pick_escape = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        pick_escape.activated.connect(self._exit_pick_mode)
+
     def _build_menus(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
 
@@ -404,6 +544,13 @@ class MainWindow(QMainWindow):
         peaks_action.triggered.connect(self._on_peak_picking)
         process_menu.addAction(peaks_action)
 
+        process_menu.addSeparator()
+        # Same QAction instances as the toolbar (see _build_toolbar) -- a
+        # QAction can live in several menus/toolbars at once and always
+        # agrees on its checked state.
+        process_menu.addAction(self.pick_peaks_action)
+        process_menu.addAction(self.clear_manual_peaks_action)
+
         view_menu = self.menuBar().addMenu("&View")
 
         self.auto_label_action = QAction("Auto-label peaks", self)
@@ -473,6 +620,7 @@ class MainWindow(QMainWindow):
             self._simple_central.activate()
             self.collect_panel.set_active(False)
             self.simple_top_bar.set_active(True)
+            self.simple_settings_strip.set_active(True)
             self.simple_bottom_bar.set_active(True)
         else:
             self._stack.setCurrentWidget(self._central)
@@ -484,6 +632,7 @@ class MainWindow(QMainWindow):
                 self.restoreState(self._dock_state)
             self.collect_panel.set_active(True)
             self.simple_top_bar.set_active(False)
+            self.simple_settings_strip.set_active(False)
             self.simple_bottom_bar.set_active(False)
 
         self._mode = mode
@@ -561,23 +710,158 @@ class MainWindow(QMainWindow):
         self._set_peak_label_params(dialog.params())
 
     def _refresh_peaks_panel(self, *_args) -> None:
-        """Fill the Peaks table with the selected spectrum's auto-labelled
-        peaks, unless a manual Peak Picking result is currently active."""
+        """Fill both Peaks tables (Advanced mode's tab and Simple mode's
+        side panel -- two independent PeaksPanel instances, kept in sync
+        here) with the selected spectrum's auto-labelled peaks merged with
+        its manually picked ones, sorted by descending wavenumber.
+
+        Manual peaks always show, even with auto-labelling off; an auto
+        peak within 4 cm-1 of a manual one is dropped (the manual one
+        wins) -- same rule as the plot's own markers, see
+        openftir.gui.plot.SpectrumPlotWidget.refresh.
+
+        Left alone (both tables keep showing whatever they already have)
+        while a manual Peak Picking dialog result is currently active --
+        see _on_peak_picking.
+        """
         if self._manual_peak_pick_active:
-            return
-        if not self.auto_label_action.isChecked():
-            self.peaks_panel.clear()
             return
         row = self._current_row()
         if row is None:
             self.peaks_panel.clear()
+            self.simple_peaks_panel.clear()
             return
-        spectrum = self.model.entry_at(row).spectrum
-        try:
-            peaks = processing.auto_label_peaks(spectrum, **self._peak_label_params())
-        except ValueError:
-            peaks = []  # single-beam/interferogram/etc.
-        self.peaks_panel.set_peaks(peaks)
+        entry = self.model.entry_at(row)
+        spectrum = entry.spectrum
+
+        manual_positions = list(entry.manual_peaks)
+        rows: list[tuple[Peak, str]] = []
+        for position in manual_positions:
+            idx = int(np.argmin(np.abs(spectrum.x - position))) if len(spectrum.x) else None
+            value = float(spectrum.y[idx]) if idx is not None else 0.0
+            rows.append((Peak(position=position, height=value), "manual"))
+
+        if self.auto_label_action.isChecked():
+            try:
+                peaks = processing.auto_label_peaks(spectrum, **self._peak_label_params())
+            except ValueError:
+                peaks = []  # single-beam/interferogram/etc.
+            for p in peaks:
+                if any(abs(p.position - m) <= 4.0 for m in manual_positions):
+                    continue
+                rows.append((p, "auto"))
+
+        rows.sort(key=lambda r: r[0].position, reverse=True)
+        self.peaks_panel.set_rows(rows)
+        self.simple_peaks_panel.set_rows(rows)
+
+    # -- manual peak picking (Simple + Advanced) -------------------------------------------
+
+    def _on_pick_peaks_toggled(self, checked: bool) -> None:
+        self.plot.set_pick_mode(checked)
+
+    def _exit_pick_mode(self) -> None:
+        self.pick_peaks_action.setChecked(False)
+
+    def _on_clear_manual_peaks(self) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        self.model.set_manual_peaks(row, [])
+
+    def _on_remove_manual_peak(self, position: float) -> None:
+        row = self._current_row()
+        if row is None:
+            return
+        entry = self.model.entry_at(row)
+        remaining = [p for p in entry.manual_peaks if abs(p - position) > 1e-6]
+        self.model.set_manual_peaks(row, remaining)
+
+    def _value_at(self, spectrum: Spectrum, x: float) -> float | None:
+        """Linearly interpolate ``spectrum.y`` at ``x`` (``spectrum.x`` may
+        be ascending or descending -- see Spectrum's docstring). ``None``
+        if ``x`` falls outside the spectrum's range or it has no points."""
+        if len(spectrum.x) == 0:
+            return None
+        order = np.argsort(spectrum.x)
+        xa, ya = spectrum.x[order], spectrum.y[order]
+        if x < xa[0] or x > xa[-1]:
+            return None
+        return float(np.interp(x, xa, ya))
+
+    def _snap_extremum(self, spectrum: Spectrum, x: float, x_tolerance: float) -> float | None:
+        """The x position of the local extremum (minimum for %T/
+        reflectance, maximum for absorbance) within ``x_tolerance`` of
+        ``x``, or ``None`` if the unit isn't one of those (single-beam,
+        interferogram, ... are ignored) or no point falls in range."""
+        if spectrum.y_unit in (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE):
+            down = True
+        elif spectrum.y_unit == YUnit.ABSORBANCE:
+            down = False
+        else:
+            return None
+        lo, hi = sorted((x - x_tolerance, x + x_tolerance))
+        mask = (spectrum.x >= lo) & (spectrum.x <= hi)
+        if not np.any(mask):
+            return None
+        xs, ys = spectrum.x[mask], spectrum.y[mask]
+        idx = int(np.argmin(ys)) if down else int(np.argmax(ys))
+        return float(xs[idx])
+
+    def _pick_target_row(self, x: float, y: float, visible: list[tuple[int, object]], px_h: float) -> int | None:
+        """Which visible spectrum a click at data (x, y) targets: the
+        selected one if it's visible, else whichever visible trace passes
+        closest to (x, y) in screen pixels (vertically, at that x)."""
+        current = self._current_row()
+        if current is not None:
+            entry = self.model.entry_at(current)
+            if entry.visible:
+                return current
+
+        best_row: int | None = None
+        best_dist: float | None = None
+        for row, entry in visible:
+            value = self._value_at(entry.spectrum, x)
+            if value is None:
+                continue
+            dist = abs((y - value) / px_h)
+            if best_dist is None or dist < best_dist:
+                best_dist, best_row = dist, row
+        return best_row
+
+    def _on_plot_pick(self, x: float, y: float) -> None:
+        """Handle a left click on the plot while pick-peaks mode is on (see
+        openftir.gui.plot.SpectrumPlotWidget.pick_requested): clicking near
+        an existing manual peak marker (within ~8 screen px) removes it;
+        otherwise snap to the nearest local extremum within +/-12 px (in x)
+        and add it as a new manual peak."""
+        entries = self.model.entries()
+        visible = [(i, e) for i, e in enumerate(entries) if e.visible]
+        if not visible:
+            return
+        px_w, px_h = self.plot.pixel_size()
+        px_w = abs(px_w) or 1.0
+        px_h = abs(px_h) or 1.0
+
+        target_row = self._pick_target_row(x, y, visible, px_h)
+        if target_row is None:
+            return
+        entry = self.model.entry_at(target_row)
+
+        for peak_x in entry.manual_peaks:
+            peak_y = self._value_at(entry.spectrum, peak_x)
+            if peak_y is None:
+                continue
+            dist_px = ((x - peak_x) / px_w) ** 2 + ((y - peak_y) / px_h) ** 2
+            if dist_px <= 8.0**2:
+                remaining = [p for p in entry.manual_peaks if p != peak_x]
+                self.model.set_manual_peaks(target_row, remaining)
+                return
+
+        new_x = self._snap_extremum(entry.spectrum, x, 12.0 * px_w)
+        if new_x is None or new_x in entry.manual_peaks:
+            return
+        self.model.set_manual_peaks(target_row, [*entry.manual_peaks, new_x])
 
     # -- list dock / spectrum chip actions -----------------------------------------------
 
@@ -653,7 +937,11 @@ class MainWindow(QMainWindow):
                 # Single-spectrum files are named after the file (OMNIC titles are
                 # often just a timestamp); groups use each spectrum's own title.
                 name = stem if len(spectra) == 1 else (spectrum.title or f"{stem} [{i + 1}]")
-                self.model.add(spectrum, name=name)
+                # Restore manual peaks a .ofjson save mirrored into meta
+                # (see SpectrumListModel.add); any other format just has
+                # no such key, so manual_peaks comes back empty.
+                manual_peaks = [float(p) for p in spectrum.meta.get("manual_peaks", []) or []]
+                self.model.add(spectrum, name=name, manual_peaks=manual_peaks)
                 loaded_any = True
             if spectra:
                 self._add_recent_file(path)
