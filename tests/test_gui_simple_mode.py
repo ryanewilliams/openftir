@@ -257,3 +257,22 @@ def test_more_settings_button_opens_trimmed_dialog(qtbot, monkeypatch):
     assert not hasattr(opened[0], "format_combo")
     assert hasattr(opened[0], "apodization_combo")
     assert hasattr(opened[0], "diagnostics_btn")
+
+
+def test_switching_modes_repeatedly_leaves_one_dock_tab_bar(qtbot):
+    # Regression: showing tabified docks one by one and then restoreState()
+    # left a stale duplicate "Library | Collect" tab bar after every switch.
+    from PySide6.QtWidgets import QTabBar
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    for _ in range(3):
+        window._apply_mode("advanced")
+        qtbot.wait(20)
+        window._apply_mode("simple")
+        qtbot.wait(20)
+    window._apply_mode("advanced")
+    qtbot.wait(20)
+    bars = [tb for tb in window.findChildren(QTabBar) if tb.parent() is window and tb.isVisible() and tb.count()]
+    assert len(bars) == 1

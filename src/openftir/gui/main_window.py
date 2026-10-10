@@ -132,7 +132,7 @@ class _CentralArea(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.addTab(peaks_panel, "Peaks")
         self.tabs.addTab(details_panel, "Details")
-        self.tabs.setMinimumHeight(120)
+        self.tabs.setMinimumHeight(200)  # keep several peak rows visible
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.plot_container, 0)
@@ -652,11 +652,15 @@ class MainWindow(QMainWindow):
         else:
             self._stack.setCurrentWidget(self._central)
             self._central.activate()
-            for dock in self._docks:
-                dock.show()
-            self.toolbar.show()
+            # Let restoreState alone decide dock visibility/tabbing. Showing
+            # tabified docks one by one *and* restoring made Qt build a new
+            # tab bar each time, leaving stale duplicates on screen.
             if self._dock_state is not None:
                 self.restoreState(self._dock_state)
+            else:
+                for dock in self._docks:
+                    dock.show()
+            self.toolbar.show()
             self.collect_panel.set_active(True)
             self.simple_top_bar.set_active(False)
             self.simple_settings_strip.set_active(False)
