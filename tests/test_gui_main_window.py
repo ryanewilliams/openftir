@@ -177,6 +177,7 @@ def test_apply_light_theme_forces_light_palette_even_over_a_dark_one(qtbot):
 def test_plot_sits_at_top_of_central_area(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    window._apply_mode("advanced")  # this layout (plot + Peaks/Details tabs) is Advanced-mode-only
     window.resize(1400, 900)
     window.show()
     qtbot.wait(50)

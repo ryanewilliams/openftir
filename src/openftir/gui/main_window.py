@@ -3,6 +3,14 @@ menu/toolbar, collect panel, library panel and details panel together.
 
 This module only orchestrates the GUI; all spectral math lives in
 ``openftir.processing`` and all file formats in ``openftir.io``.
+
+Two UI modes share this one window: **Simple** (the default -- a minimal
+top bar + plot + spectrum chips, for routine background/sample collection)
+and **Advanced** (the full dock/toolbar/menu layout this app always had).
+Both modes are views over the same state -- one :class:`SpectrumPlotWidget`
+instance, one :class:`SpectrumListModel`, and one
+:class:`~openftir.gui.collect_controller.CollectController` -- so switching
+modes never duplicates or loses anything; see ``_apply_mode``.
 """
 
 from __future__ import annotations
@@ -11,7 +19,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QRect, QSettings, QSize, Qt
-from PySide6.QtGui import QAction, QColor, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
@@ -22,6 +30,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QToolBar,
     QSizePolicy,
     QTabWidget,
@@ -32,6 +41,7 @@ from PySide6.QtWidgets import (
 from openftir import __version__, processing
 from openftir.spectrum import Spectrum, XUnit, YUnit
 from openftir.gui import file_dialogs
+from openftir.gui.collect_controller import CollectController
 from openftir.gui.collect_panel import CollectPanel
 from openftir.gui.details_panel import DetailsPanel
 from openftir.gui.dialogs import (
@@ -49,6 +59,7 @@ from openftir.gui.dialogs import (
 from openftir.gui.library_panel import LibraryPanel
 from openftir.gui.peaks_panel import PeaksPanel
 from openftir.gui.plot import SpectrumPlotWidget
+from openftir.gui.simple_panels import SimpleBottomBar, SimpleTopBar
 from openftir.gui.spectrum_list import ColorRole, SpectrumListModel
 
 _MAX_RECENT_FILES = 10
@@ -69,8 +80,14 @@ def _io_module():
 class _PlotAspectContainer(QWidget):
     """Holds the spectrum plot at a fixed 16:9 aspect ratio: its height
     follows its width, so the plot never turns into a tall or squashed
-    shape whatever space the docks leave. Width shrinks if the height
-    available would otherwise be exceeded."""
+    shape whatever space is left for it. Width shrinks if the height
+    available would otherwise be exceeded.
+
+    There is exactly one instance of this (and of the plot widget it wraps)
+    for the whole app; Simple and Advanced mode's central widgets both hold
+    a reference to it and move it into their own layout when they become
+    active -- see ``_CentralArea.activate``/``_SimpleCentralArea.activate``.
+    """
 
     _ASPECT = 16 / 9
 
@@ -102,11 +119,12 @@ class _PlotAspectContainer(QWidget):
 
 
 class _CentralArea(QWidget):
-    """Plot at the top (16:9), Peaks/Details tabs filling the space below."""
+    """Advanced mode's central widget: plot at the top (16:9), Peaks/Details
+    tabs filling the space below."""
 
-    def __init__(self, plot_widget: QWidget, peaks_panel: QWidget, details_panel: QWidget, parent=None):
+    def __init__(self, plot_container: _PlotAspectContainer, peaks_panel: QWidget, details_panel: QWidget, parent=None):
         super().__init__(parent)
-        self.plot_container = _PlotAspectContainer(plot_widget, self)
+        self.plot_container = plot_container
         self.tabs = QTabWidget(self)
         self.tabs.addTab(peaks_panel, "Peaks")
         self.tabs.addTab(details_panel, "Details")
@@ -116,12 +134,44 @@ class _CentralArea(QWidget):
         layout.addWidget(self.plot_container, 0)
         layout.addWidget(self.tabs, 1)
 
+    def activate(self) -> None:
+        """Reclaim the shared plot container into this layout (it may
+        currently be living inside Simple mode's central widget)."""
+        self.layout().insertWidget(0, self.plot_container)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         # Height-for-width isn't honoured by QVBoxLayout on its own; give the
         # plot exactly 9/16 of the width, but never squeeze the tabs below
         # their minimum.
         max_plot_h = max(self.height() - self.tabs.minimumHeight(), 180)
+        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
+
+
+class _SimpleCentralArea(QWidget):
+    """Simple mode's central widget: top bar, plot (16:9), bottom bar."""
+
+    def __init__(self, plot_container: _PlotAspectContainer, top_bar: QWidget, bottom_bar: QWidget, parent=None):
+        super().__init__(parent)
+        self.plot_container = plot_container
+        self.top_bar = top_bar
+        self.bottom_bar = bottom_bar
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(top_bar, 0)
+        layout.addWidget(plot_container, 0)
+        layout.addWidget(bottom_bar, 0)
+
+    def activate(self) -> None:
+        """Reclaim the shared plot container into this layout (it may
+        currently be living inside Advanced mode's central widget)."""
+        self.layout().insertWidget(1, self.plot_container)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        reserved = self.top_bar.sizeHint().height() + self.bottom_bar.sizeHint().height()
+        max_plot_h = max(self.height() - reserved, 160)
         self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(self.width()), max_plot_h))
 
 
@@ -152,8 +202,13 @@ class MainWindow(QMainWindow):
         self.plot.cursor_moved.connect(self._on_cursor_moved)
         self.details_panel = DetailsPanel()
         self.peaks_panel = PeaksPanel()
-        self._central = _CentralArea(self.plot, self.peaks_panel, self.details_panel, self)
-        self.setCentralWidget(self._central)
+
+        # One instrument/collection state, shared by Advanced mode's Collect
+        # dock and Simple mode's top bar -- see collect_controller.py.
+        self.collect_controller = CollectController(self)
+
+        plot_container = _PlotAspectContainer(self.plot, self)
+        self._central = _CentralArea(plot_container, self.peaks_panel, self.details_panel, self)
 
         self._build_list_dock()
         self._build_collect_dock()
@@ -161,11 +216,50 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_menus()
 
+        self.simple_top_bar = SimpleTopBar(
+            self.collect_controller,
+            get_auto_label=lambda: self.auto_label_action.isChecked(),
+            set_auto_label=lambda checked: self.auto_label_action.setChecked(checked),
+            get_peak_label_params=self._peak_label_params,
+            set_peak_label_params=self._set_peak_label_params,
+            parent=self,
+        )
+        self.simple_top_bar.spectrum_collected.connect(self._on_spectrum_collected)
+        self.simple_top_bar.preview_ready.connect(self._on_preview_ready)
+        self.simple_top_bar.status_message.connect(self.statusBar().showMessage)
+        self.simple_top_bar.advanced_requested.connect(lambda: self._apply_mode("advanced"))
+
+        self.simple_bottom_bar = SimpleBottomBar(self.model, self.collect_controller, self)
+        self.simple_bottom_bar.select_row_requested.connect(
+            lambda row: self.list_view.setCurrentIndex(self.model.index(row))
+        )
+        self.simple_bottom_bar.visibility_toggle_requested.connect(self._toggle_visibility)
+        self.simple_bottom_bar.rename_requested.connect(self._rename_current)
+        self.simple_bottom_bar.recolor_requested.connect(self._recolor_current)
+        self.simple_bottom_bar.save_requested.connect(self._on_save_selected)
+        self.simple_bottom_bar.delete_requested.connect(self._delete_row)
+        self.simple_bottom_bar.open_requested.connect(self._on_open)
+        self.simple_bottom_bar.export_requested.connect(self._on_save_selected)
+
+        self._simple_central = _SimpleCentralArea(plot_container, self.simple_top_bar, self.simple_bottom_bar, self)
+
+        self._stack = QStackedWidget(self)
+        self._stack.addWidget(self._central)
+        self._stack.addWidget(self._simple_central)
+        self.setCentralWidget(self._stack)
+
         self.statusBar().showMessage("Ready")
         self._update_recent_files_menu()
         self._apply_window_geometry()
 
-    # -- docks ------------------------------------------------------------------------
+        self._mode: str | None = None
+        self._dock_state = None
+        initial_mode = self.settings.value("ui/mode", "simple", type=str)
+        if initial_mode not in ("simple", "advanced"):
+            initial_mode = "simple"
+        self._apply_mode(initial_mode)
+
+    # -- docks ------------------------------------------------------------------
 
     def _build_list_dock(self) -> None:
         dock = QDockWidget("Spectra", self)
@@ -196,16 +290,18 @@ class MainWindow(QMainWindow):
 
         dock.setWidget(container)
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self.spectra_dock = dock
 
     def _build_collect_dock(self) -> None:
         dock = QDockWidget("Collect", self)
         dock.setObjectName("collectDock")
-        self.collect_panel = CollectPanel()
+        self.collect_panel = CollectPanel(controller=self.collect_controller)
         self.collect_panel.spectrum_collected.connect(self._on_spectrum_collected)
         self.collect_panel.preview_ready.connect(self._on_preview_ready)
         self.collect_panel.status_message.connect(self.statusBar().showMessage)
         dock.setWidget(self.collect_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self.collect_dock = dock
 
     def _build_library_dock(self) -> None:
         dock = QDockWidget("Library", self)
@@ -214,7 +310,9 @@ class MainWindow(QMainWindow):
         self.library_panel.overlay_requested.connect(self._on_library_overlay)
         dock.setWidget(self.library_panel)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
-        self.tabifyDockWidget(dock, self.findChild(QDockWidget, "collectDock"))
+        self.tabifyDockWidget(dock, self.collect_dock)
+        self.library_dock = dock
+        self._docks = [self.spectra_dock, self.collect_dock, self.library_dock]
 
     # -- toolbar / menus ----------------------------------------------------------------
 
@@ -222,6 +320,7 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("mainToolbar")
         self.addToolBar(toolbar)
+        self.toolbar = toolbar
 
         self.stack_action = QAction("Stack/Offset", self)
         self.stack_action.setCheckable(True)
@@ -318,6 +417,21 @@ class MainWindow(QMainWindow):
         peak_label_settings_action.triggered.connect(self._on_peak_label_settings)
         view_menu.addAction(peak_label_settings_action)
 
+        view_menu.addSeparator()
+
+        mode_group = QActionGroup(self)
+        mode_group.setExclusive(True)
+        self.simple_mode_action = QAction("Simple mode", self)
+        self.simple_mode_action.setCheckable(True)
+        self.simple_mode_action.triggered.connect(lambda: self._apply_mode("simple"))
+        self.advanced_mode_action = QAction("Advanced mode", self)
+        self.advanced_mode_action.setCheckable(True)
+        self.advanced_mode_action.triggered.connect(lambda: self._apply_mode("advanced"))
+        mode_group.addAction(self.simple_mode_action)
+        mode_group.addAction(self.advanced_mode_action)
+        view_menu.addAction(self.simple_mode_action)
+        view_menu.addAction(self.advanced_mode_action)
+
         # Sync the plot (constructed with its own built-in defaults, before
         # this settings-backed action existed) to whatever was actually
         # remembered -- setChecked() above fires no signal since toggled
@@ -336,6 +450,46 @@ class MainWindow(QMainWindow):
         about_action = QAction("About OpenFTIR", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    # -- Simple <-> Advanced mode -------------------------------------------------------
+
+    def _apply_mode(self, mode: str) -> None:
+        """Switch the central widget, and (for Advanced) the docks/toolbar,
+        between Simple and Advanced mode. The plot widget, the spectrum
+        model and the collect controller are never recreated -- only the
+        views over them change -- see the module docstring."""
+        if mode not in ("simple", "advanced"):
+            mode = "simple"
+        if mode == self._mode:
+            return
+
+        if mode == "simple":
+            if self._mode != "simple":
+                self._dock_state = self.saveState()
+            for dock in self._docks:
+                dock.hide()
+            self.toolbar.hide()
+            self._stack.setCurrentWidget(self._simple_central)
+            self._simple_central.activate()
+            self.collect_panel.set_active(False)
+            self.simple_top_bar.set_active(True)
+            self.simple_bottom_bar.set_active(True)
+        else:
+            self._stack.setCurrentWidget(self._central)
+            self._central.activate()
+            for dock in self._docks:
+                dock.show()
+            self.toolbar.show()
+            if self._dock_state is not None:
+                self.restoreState(self._dock_state)
+            self.collect_panel.set_active(True)
+            self.simple_top_bar.set_active(False)
+            self.simple_bottom_bar.set_active(False)
+
+        self._mode = mode
+        self.settings.setValue("ui/mode", mode)
+        self.simple_mode_action.setChecked(mode == "simple")
+        self.advanced_mode_action.setChecked(mode == "advanced")
 
     # -- selection helpers --------------------------------------------------------------
 
@@ -366,6 +520,9 @@ class MainWindow(QMainWindow):
         else:
             self.details_panel.clear()
         self._refresh_peaks_panel()
+        bottom_bar = getattr(self, "simple_bottom_bar", None)
+        if bottom_bar is not None:
+            bottom_bar.set_highlighted_row(self._current_row())
 
     def _refresh_plot(self, *_args) -> None:
         self.plot.refresh(self.model.entries(), highlight_row=self._current_row())
@@ -384,6 +541,13 @@ class MainWindow(QMainWindow):
         self.plot.set_auto_label_enabled(checked)
         self._refresh_peaks_panel()
 
+    def _set_peak_label_params(self, new_params: dict) -> None:
+        self.settings.setValue("peakLabel/maxTransmittance", new_params["max_transmittance"])
+        self.settings.setValue("peakLabel/minWavenumber", new_params["min_wavenumber"])
+        self.settings.setValue("peakLabel/minProminenceT", new_params["min_prominence_t"])
+        self.plot.set_auto_label_params(**new_params)
+        self._refresh_peaks_panel()
+
     def _on_peak_label_settings(self) -> None:
         params = self._peak_label_params()
         dialog = PeakLabelSettingsDialog(
@@ -394,12 +558,7 @@ class MainWindow(QMainWindow):
         )
         if not dialog.exec():
             return
-        new_params = dialog.params()
-        self.settings.setValue("peakLabel/maxTransmittance", new_params["max_transmittance"])
-        self.settings.setValue("peakLabel/minWavenumber", new_params["min_wavenumber"])
-        self.settings.setValue("peakLabel/minProminenceT", new_params["min_prominence_t"])
-        self.plot.set_auto_label_params(**new_params)
-        self._refresh_peaks_panel()
+        self._set_peak_label_params(dialog.params())
 
     def _refresh_peaks_panel(self, *_args) -> None:
         """Fill the Peaks table with the selected spectrum's auto-labelled
@@ -420,10 +579,11 @@ class MainWindow(QMainWindow):
             peaks = []  # single-beam/interferogram/etc.
         self.peaks_panel.set_peaks(peaks)
 
-    # -- list dock actions --------------------------------------------------------------
+    # -- list dock / spectrum chip actions -----------------------------------------------
 
-    def _rename_current(self) -> None:
-        row = self._current_row()
+    def _rename_current(self, row: int | None = None) -> None:
+        if row is None:
+            row = self._current_row()
         if row is None:
             return
         entry = self.model.entry_at(row)
@@ -431,8 +591,9 @@ class MainWindow(QMainWindow):
         if ok and name.strip():
             self.model.setData(self.model.index(row), name.strip(), Qt.EditRole)
 
-    def _recolor_current(self) -> None:
-        row = self._current_row()
+    def _recolor_current(self, row: int | None = None) -> None:
+        if row is None:
+            row = self._current_row()
         if row is None:
             return
         entry = self.model.entry_at(row)
@@ -443,6 +604,14 @@ class MainWindow(QMainWindow):
     def _delete_selected(self) -> None:
         for row in reversed(self._selected_rows()):
             self.model.remove(row)
+
+    def _delete_row(self, row: int) -> None:
+        self.model.remove(row)
+
+    def _toggle_visibility(self, row: int) -> None:
+        entry = self.model.entry_at(row)
+        new_state = Qt.Unchecked if entry.visible else Qt.Checked
+        self.model.setData(self.model.index(row), new_state, Qt.CheckStateRole)
 
     def _on_stack_toggled(self, checked: bool) -> None:
         self.plot.set_stack_mode(checked)
@@ -492,8 +661,9 @@ class MainWindow(QMainWindow):
         if errors:
             QMessageBox.critical(self, "Open", "Some files could not be opened:\n\n" + "\n".join(errors))
 
-    def _on_save_selected(self) -> None:
-        row = self._current_row()
+    def _on_save_selected(self, row: int | None = None) -> None:
+        if row is None:
+            row = self._current_row()
         if row is None:
             QMessageBox.information(self, "Save", "Select a spectrum first.")
             return
@@ -727,7 +897,7 @@ class MainWindow(QMainWindow):
             "Not affiliated with Thermo Fisher Scientific.",
         )
 
-    # -- collect panel callbacks ----------------------------------------------------------
+    # -- collect panel / simple top bar callbacks --------------------------------------
 
     def _on_spectrum_collected(self, spectrum: Spectrum, name: str) -> None:
         self.plot.clear_live_preview()
