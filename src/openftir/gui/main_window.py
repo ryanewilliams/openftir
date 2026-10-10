@@ -959,6 +959,8 @@ class MainWindow(QMainWindow):
             self._open_paths(paths)
 
     def _open_paths(self, paths: list[str]) -> None:
+        if not self.collect_controller.busy:
+            self.plot.clear_live_preview()  # e.g. the background shown on an empty plot
         try:
             io_mod = _io_module()
         except ImportError as exc:
@@ -1289,6 +1291,10 @@ class MainWindow(QMainWindow):
             # A background: kept in the list (Advanced mode can tick it on to
             # inspect it) but hidden, so it doesn't share an axis with %T data.
             self.model.add(spectrum, name=name, visible=False)
+            if not self.model.visible_entries():
+                # Nothing else on screen: show the background so collecting
+                # it visibly did something. Replaced by the first sample.
+                self.plot.show_live_preview(spectrum.x, spectrum.y, "Background (single beam)", YUnit.SINGLE_BEAM, solid=True)
             return
         row = self.model.add(spectrum, name=name)
         self.list_view.setCurrentIndex(self.model.index(row))

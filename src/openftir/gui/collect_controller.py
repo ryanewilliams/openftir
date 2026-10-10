@@ -30,7 +30,11 @@ from openftir.spectrum import local_naive, Spectrum, YUnit
 from openftir.gui.workers import CallWorker, CollectWorker, start_worker
 
 BACKGROUND_WARN_AFTER = timedelta(minutes=60)
-SIMULATED_SAMPLES = ["polystyrene", "water-vapour", "none"]
+SIMULATED_SAMPLES = ["polystyrene", "limonene", "water-vapour", "none"]
+
+#: Per-scan delay for the simulated instrument in the app, so a collection
+#: takes a realistic moment and the progress bar is visible (16 scans ≈ 1 s).
+SIMULATED_SCAN_TIME_S = 0.06
 # %Transmittance listed first so it's the default -- ATR-FTIR users normally
 # work in %T. See _restore_driver_settings: the remembered-format settings
 # key is "format_v2" so an old install's saved "Absorbance" (which used to
@@ -163,7 +167,7 @@ class CollectController(QObject):
         try:
             if driver_id == "simulated":
                 try:
-                    instrument = registry.create(driver_id, sample=self.sim_sample)
+                    instrument = registry.create(driver_id, sample=self.sim_sample, scan_time_s=SIMULATED_SCAN_TIME_S)
                 except TypeError:
                     instrument = registry.create(driver_id)
             else:
@@ -280,6 +284,9 @@ class CollectController(QObject):
         self.save_driver_settings()
         self._pending_mode = mode
         params = self.build_params()
+        # Tell the driver what this collection is for; drivers may use it
+        # (the simulator collects an empty beam for a background).
+        params.extra["purpose"] = mode
 
         worker = CollectWorker(self._instrument, params, lock=self._instrument_lock)
         self._worker = worker
@@ -307,7 +314,7 @@ class CollectController(QObject):
             self.background_changed.emit()
             name = f"Background {self._background_time:%H:%M:%S}"
             self.collect_finished.emit("background", spectrum, name)
-            self.status_message.emit("Background collected")
+            self.status_message.emit("Background collected. Place your sample, then click Collect sample.")
             return
 
         if self._background is None:

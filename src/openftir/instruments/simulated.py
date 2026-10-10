@@ -81,6 +81,31 @@ _SAMPLE_BANDS: dict[str, tuple[tuple[float, float, float], ...]] = {
         (757.0, 0.550, 8.0),
         (698.0, 0.650, 10.0),
     ),
+    # (R)-(+)-limonene, neat liquid on a diamond ATR: approximate band
+    # positions/relative intensities from its well-known IR spectrum.
+    "limonene": (
+        (3083.0, 0.060, 10.0),   # =CH2 asym stretch (vinylidene)
+        (3008.0, 0.050, 12.0),   # =C-H stretch (ring)
+        (2965.0, 0.300, 16.0),   # CH3 asym stretch
+        (2918.0, 0.650, 18.0),   # CH2 asym stretch (strongest)
+        (2856.0, 0.350, 14.0),   # CH2 sym stretch
+        (2834.0, 0.200, 10.0),
+        (2725.0, 0.030, 12.0),
+        (1678.0, 0.050, 10.0),   # C=C stretch, trisubstituted ring
+        (1644.0, 0.180, 10.0),   # C=C stretch, vinylidene
+        (1452.0, 0.250, 12.0),   # CH2 scissor
+        (1436.0, 0.300, 10.0),
+        (1376.0, 0.180, 9.0),    # CH3 umbrella
+        (1311.0, 0.050, 10.0),
+        (1150.0, 0.060, 12.0),
+        (1050.0, 0.050, 10.0),
+        (1015.0, 0.050, 10.0),
+        (948.0, 0.060, 10.0),
+        (915.0, 0.080, 10.0),
+        (886.0, 0.600, 9.0),     # =CH2 out-of-plane wag (diagnostic)
+        (798.0, 0.220, 10.0),    # trisubstituted C=C-H wag
+        (756.0, 0.060, 10.0),
+    ),
     # A "wet" / vapour-cell sample: just an extra-strong dose of the same
     # water-vapour comb used for the atmospheric background, so the
     # collected spectrum is dominated by sharp rotational-vibrational lines.
@@ -152,7 +177,7 @@ class SimulatedInstrument(Instrument):
     driver_id = "simulated"
     display_name = "Simulated FTIR (Summit-like)"
 
-    _SAMPLES = ("polystyrene", "water-vapour", "none")
+    _SAMPLES = ("polystyrene", "limonene", "water-vapour", "none")
 
     def __init__(
         self,
@@ -253,16 +278,19 @@ class SimulatedInstrument(Instrument):
 
     # -- internals -----------------------------------------------------------
 
-    def _ideal_single_beam(self, wn: np.ndarray) -> np.ndarray:
+    def _ideal_single_beam(self, wn: np.ndarray, sample: str | None = None) -> np.ndarray:
+        """``sample`` overrides ``self.sample`` for one collection (a
+        background is always an empty beam, whatever sample is selected)."""
+        sample = self.sample if sample is None else sample
         envelope = _source_envelope(wn)
 
         atmosphere_absorbance = _band_sum(wn, _CO2_BANDS, scale=self._co2_level)
         atmosphere_absorbance += _water_vapour_absorbance(wn, scale=self._humidity_level)
         atmosphere_transmission = np.power(10.0, -atmosphere_absorbance)
 
-        if self.sample == "polystyrene":
-            sample_absorbance = _band_sum(wn, _SAMPLE_BANDS["polystyrene"])
-        elif self.sample == "water-vapour":
+        if _SAMPLE_BANDS.get(sample):
+            sample_absorbance = _band_sum(wn, _SAMPLE_BANDS[sample])
+        elif sample == "water-vapour":
             sample_absorbance = _water_vapour_absorbance(wn, scale=4.0)
         else:  # "none" -- empty beam
             sample_absorbance = np.zeros_like(wn)
@@ -291,7 +319,9 @@ class SimulatedInstrument(Instrument):
         wn_grid = np.linspace(50.0, min(0.99 * _LASER_WAVENUMBER / 2.0, 7800.0), 4096)
         ideal_sb = Spectrum(
             x=wn_grid,
-            y=self._ideal_single_beam(wn_grid),
+            # A background is an empty beam: on a real instrument you don't
+            # leave the sample on the crystal while collecting it.
+            y=self._ideal_single_beam(wn_grid, "none" if params.extra.get("purpose") == "background" else None),
             x_unit=XUnit.WAVENUMBER,
             y_unit=YUnit.SINGLE_BEAM,
         )

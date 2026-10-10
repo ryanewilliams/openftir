@@ -114,3 +114,35 @@ def test_background_vs_none_sample_is_flat_ratio():
 
     absorbance = ratio(a, b, to=YUnit.ABSORBANCE)
     assert np.max(np.abs(absorbance.y)) < 0.2
+
+
+def test_background_is_empty_beam_whatever_sample_is_selected():
+    # Regression: with a sample selected, the background contained the sample
+    # too, so sample/background ratioed to a featureless 100 %T line.
+    import numpy as np
+    from openftir.instruments.base import CollectParams
+    from openftir.instruments.simulated import SimulatedInstrument
+    from openftir.processing import find_peaks, ratio, to_absorbance
+
+    inst = SimulatedInstrument(sample="polystyrene", seed=1)
+    inst.connect()
+    bg = inst.collect_single_beam(CollectParams(extra={"purpose": "background"}))
+    sample = inst.collect_single_beam(CollectParams(extra={"purpose": "sample"}))
+    a = to_absorbance(ratio(sample, bg))
+    positions = [p.position for p in find_peaks(a, prominence=0.1)]
+    assert any(abs(p - 1493) < 5 for p in positions)
+    assert any(abs(p - 698) < 5 for p in positions)
+
+
+def test_limonene_sample_shows_its_characteristic_bands():
+    from openftir.instruments.base import CollectParams
+    from openftir.instruments.simulated import SimulatedInstrument
+    from openftir.processing import find_peaks, ratio, to_absorbance
+
+    inst = SimulatedInstrument(sample="limonene", seed=2)
+    inst.connect()
+    bg = inst.collect_single_beam(CollectParams(extra={"purpose": "background"}))
+    a = to_absorbance(ratio(inst.collect_single_beam(CollectParams()), bg))
+    positions = [p.position for p in find_peaks(a, prominence=0.1)]
+    for band in (2918, 1644, 886):
+        assert any(abs(p - band) < 6 for p in positions), (band, positions)

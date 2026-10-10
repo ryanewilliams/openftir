@@ -276,3 +276,14 @@ def test_switching_modes_repeatedly_leaves_one_dock_tab_bar(qtbot):
     qtbot.wait(20)
     bars = [tb for tb in window.findChildren(QTabBar) if tb.parent() is window and tb.isVisible() and tb.count()]
     assert len(bars) == 1
+
+
+def test_background_button_shows_background_on_empty_plot(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    controller = window.collect_controller
+    window.simple_top_bar.background_btn.click()
+    qtbot.waitUntil(lambda: controller.background is not None and not controller.busy, timeout=15000)
+    assert window.plot.has_live_preview()
+    assert "Place your sample" in window.statusBar().currentMessage()

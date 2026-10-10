@@ -342,6 +342,11 @@ class SpectrumPlotWidget(QWidget):
                         continue  # a manual pick already marks this band
                     label_candidates.append((p.position, p.height + offset, down, entry.color, False))
 
+        # legend.clear() above also dropped the preview trace's entry.
+        if self._preview_item is not None and self.plot_item.legend is not None:
+            self.plot_item.legend.addItem(self._preview_item, self._preview_item.name())
+        self._update_legend_visibility()
+
         if label_candidates:
             self._reserve_label_headroom(visible, offsets, label_candidates)
         self.plot_item.vb.autoRange()
@@ -530,18 +535,37 @@ class SpectrumPlotWidget(QWidget):
     # -- live collect preview --------------------------------------------------------
 
     def show_live_preview(
-        self, x: np.ndarray, y: np.ndarray, label: str, y_unit: YUnit = YUnit.SINGLE_BEAM
+        self, x: np.ndarray, y: np.ndarray, label: str, y_unit: YUnit = YUnit.SINGLE_BEAM, solid: bool = False
     ) -> None:
+        """Show a preview trace (live single beam while collecting, or the
+        finished background). ``solid`` draws it as a muted solid line
+        instead of the thin dotted in-progress style."""
         self.clear_live_preview()
-        pen = _cosmetic_pen("#7f7f7f", width=_OVERLAY_PEN_WIDTH, style=Qt.DotLine)
+        if solid:
+            pen = _cosmetic_pen("#6b7480", width=_SPECTRUM_PEN_WIDTH)
+        else:
+            pen = _cosmetic_pen("#7f7f7f", width=_OVERLAY_PEN_WIDTH, style=Qt.DotLine)
         self._preview_item = self.plot_item.plot(x, y, pen=pen, name=label)
         self._preview_y_unit = y_unit
         self._update_axis_labels()
+        self._update_legend_visibility()
         self.plot_item.vb.autoRange()
+
+    def has_live_preview(self) -> bool:
+        return self._preview_item is not None
+
+    def _update_legend_visibility(self) -> None:
+        # An empty legend draws as a stray little box in the corner.
+        legend = self.plot_item.legend
+        if legend is not None:
+            legend.setVisible(bool(legend.items))
 
     def clear_live_preview(self) -> None:
         if self._preview_item is not None:
             self.plot_item.removeItem(self._preview_item)
+            if self.plot_item.legend is not None:
+                self.plot_item.legend.removeItem(self._preview_item)
             self._preview_item = None
         self._preview_y_unit = None
         self._update_axis_labels()
+        self._update_legend_visibility()
