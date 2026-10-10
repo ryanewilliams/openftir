@@ -39,13 +39,15 @@ class PeaksPanel(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
 
+        self._value_label = "%T / A"
         self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Position", "Value", "Type", ""])
+        self._table.setHorizontalHeaderLabels(["cm⁻¹", self._value_label, "Type", ""])
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.resizeSection(3, 30)
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         layout.addWidget(self._table)
@@ -75,7 +77,8 @@ class PeaksPanel(QWidget):
         self._table.setRowCount(len(self._rows))
         for row, (peak, kind) in enumerate(self._rows):
             self._table.setItem(row, 0, QTableWidgetItem(f"{peak.position:.0f}"))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{peak.height:.2f}"))
+            value = 0.0 if abs(peak.height) < 0.05 else peak.height
+            self._table.setItem(row, 1, QTableWidgetItem(f"{value:.1f}" if abs(value) >= 1 else f"{value:.3f}"))
             self._table.setItem(row, 2, QTableWidgetItem(kind))
             if kind == "manual":
                 remove_btn = QPushButton("×")
@@ -85,6 +88,11 @@ class PeaksPanel(QWidget):
                 self._table.setCellWidget(row, 3, remove_btn)
             else:
                 self._table.setCellWidget(row, 3, None)
+
+    def set_value_label(self, label: str) -> None:
+        """Column header for the peak value, e.g. "%T" or "Absorbance"."""
+        self._value_label = label
+        self._table.setHorizontalHeaderItem(1, QTableWidgetItem(label))
 
     def set_peaks(self, peaks: list[Peak]) -> None:
         """Legacy API for the Process > Peak Picking... dialog's preview:

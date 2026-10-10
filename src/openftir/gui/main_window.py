@@ -141,6 +141,9 @@ class _CentralArea(QWidget):
     def activate(self) -> None:
         """Reclaim the shared plot container into this layout (it may
         currently be living inside Simple mode's central widget)."""
+        # Simple mode pins the container to an exact width; undo that here.
+        self.plot_container.setMinimumWidth(0)
+        self.plot_container.setMaximumWidth(16777215)
         self.layout().insertWidget(0, self.plot_container)
 
     def resizeEvent(self, event) -> None:
@@ -184,10 +187,25 @@ class _SimplePlotToolbar(QWidget):
         clear_btn.clicked.connect(clear_action.trigger)
         row.addWidget(clear_btn)
 
+        # Shown only while pick mode is on, so it's obvious what a click does.
+        self.pick_hint = QLabel("Click a band to label it · click a picked label to remove it · Esc to finish")
+        self.pick_hint.setStyleSheet("color: #174a86; padding-left: 8px;")
+        self.pick_hint.setVisible(pick_peaks_action.isChecked())
+        pick_peaks_action.toggled.connect(self.pick_hint.setVisible)
+        row.addWidget(self.pick_hint)
+
         row.addStretch(1)
 
+        # Make toggle state visible: flat buttons that read as "pressed" in
+        # the accent colour when on (pick mode / auto labels).
+        self.setStyleSheet(
+            "QToolButton { padding: 3px 10px; border: 1px solid transparent; border-radius: 4px; }"
+            "QToolButton:hover { border-color: #c9d3df; background: #f1f4f8; }"
+            "QToolButton:checked { background: #dce9f8; border-color: #9cbce3; color: #174a86; }"
+        )
+
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(900, 26)
+        return QSize(900, 30)
 
 
 class _PeaksSidePanel(QWidget):
@@ -200,8 +218,9 @@ class _PeaksSidePanel(QWidget):
 
     def __init__(self, peaks_panel: QWidget, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(self.WIDTH)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        # Width is set by _SimpleCentralArea (min/max), so the panel takes
+        # whatever the 16:9 plot leaves instead of a fixed 260 px.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 14, 0)
         layout.setSpacing(4)
@@ -245,8 +264,12 @@ class _SimpleCentralArea(QWidget):
         self._body_layout = QHBoxLayout(self._body)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(0)
-        self._body_layout.addWidget(plot_container, 1)
-        self._body_layout.addWidget(peaks_side_panel, 0)
+        self._body_layout.addWidget(plot_container, 0)
+        self._body_layout.addSpacing(12)
+        self._body_layout.addWidget(peaks_side_panel, 1)
+        peaks_side_panel.setMinimumWidth(240)
+        peaks_side_panel.setMaximumWidth(420)
+        self._body_layout.addStretch(0)
         layout.addWidget(self._body, 1)
 
         layout.addWidget(bottom_bar, 0)
@@ -264,9 +287,13 @@ class _SimpleCentralArea(QWidget):
             + self.plot_toolbar.sizeHint().height()
             + self.bottom_bar.sizeHint().height()
         )
+        # Size the plot box to exactly 16:9: as tall as the space allows, but
+        # leaving the Peaks panel at least its minimum width. The panel then
+        # takes the remaining width instead of empty margins around the plot.
         max_plot_h = max(self.height() - reserved, 160)
-        available_w = max(self.width() - self.peaks_side_panel.width(), 160)
-        self.plot_container.setFixedHeight(min(self.plot_container.heightForWidth(available_w), max_plot_h))
+        available_w = max(self.width() - self.peaks_side_panel.minimumWidth() - 12, 160)
+        plot_w = min(available_w, int(max_plot_h * 16 / 9))
+        self.plot_container.setFixedSize(plot_w, self.plot_container.heightForWidth(plot_w))
 
 
 class MainWindow(QMainWindow):
@@ -733,6 +760,9 @@ class MainWindow(QMainWindow):
             return
         entry = self.model.entry_at(row)
         spectrum = entry.spectrum
+        value_label = {YUnit.TRANSMITTANCE: "%T", YUnit.ABSORBANCE: "Absorbance", YUnit.REFLECTANCE: "%R"}.get(spectrum.y_unit, "Value")
+        for panel in self.findChildren(PeaksPanel):
+            panel.set_value_label(value_label)
 
         manual_positions = list(entry.manual_peaks)
         rows: list[tuple[Peak, str]] = []
