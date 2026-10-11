@@ -116,11 +116,9 @@ class _PlotAspectContainer(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        w, h = self.width(), self.height()
-        plot_w, plot_h = float(w), w / self._ASPECT
-        if plot_h > h:
-            plot_w, plot_h = h * self._ASPECT, float(h)
-        self._plot_widget.setGeometry(int((w - plot_w) / 2), 0, int(plot_w), int(plot_h))
+        # The parent areas choose this box's shape (16:9, or somewhat wider
+        # when there is spare width); the plot simply fills it.
+        self._plot_widget.setGeometry(0, 0, self.width(), self.height())
 
 
 class _CentralArea(QWidget):
@@ -253,7 +251,7 @@ class _SimpleBody(QWidget):
 
     _GAP = 12
     _PANEL_MIN_W = 240
-    _PANEL_MAX_W = 420
+    _PANEL_PREF_W = 340
 
     def __init__(self, plot_container: _PlotAspectContainer, panel: QWidget, parent=None):
         super().__init__(parent)
@@ -266,7 +264,7 @@ class _SimpleBody(QWidget):
         return QSize(320 + self._GAP + self._PANEL_MIN_W, 180)
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(960 + self._GAP + self._PANEL_MAX_W, 540)
+        return QSize(960 + self._GAP + self._PANEL_PREF_W, 540)
 
     def activate(self) -> None:
         self.plot_container.setParent(self)
@@ -279,14 +277,13 @@ class _SimpleBody(QWidget):
 
     def _relayout(self) -> None:
         w, h = self.width(), self.height()
-        plot_w = min(w - self._PANEL_MIN_W - self._GAP, int(h * 16 / 9))
-        plot_w = max(plot_w, min(320, w))
-        plot_h = min(self.plot_container.height_for_width(plot_w), h)
+        # The plot fills all the space left of the Peaks panel, at whatever
+        # aspect that gives; exports are rendered separately at 16:9.
+        panel_w = max(min(self._PANEL_PREF_W, w - self._GAP - 320), self._PANEL_MIN_W)
+        plot_w = max(w - self._GAP - panel_w, min(320, w))
         if self.plot_container.parent() is self:
-            self.plot_container.setGeometry(0, 0, plot_w, plot_h)
-        panel_x = plot_w + self._GAP
-        panel_w = max(min(self._PANEL_MAX_W, w - panel_x), 0)
-        self.panel.setGeometry(panel_x, 0, panel_w, h)
+            self.plot_container.setGeometry(0, 0, plot_w, h)
+        self.panel.setGeometry(plot_w + self._GAP, 0, max(w - plot_w - self._GAP, 0), h)
 
 
 class _SimpleCentralArea(QWidget):
@@ -1073,13 +1070,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            import pyqtgraph.exporters as exporters
-
-            if path.lower().endswith(".svg"):
-                exporter = exporters.SVGExporter(self.plot.plot_item)
-            else:
-                exporter = exporters.ImageExporter(self.plot.plot_item)
-            exporter.export(path)
+            # Always 16:9 (1600x900), however the on-screen plot is stretched.
+            self.plot.render_export(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export Plot", f"Could not export plot:\n{exc}")
 

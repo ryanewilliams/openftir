@@ -7,15 +7,17 @@ every instrument-dependent control disabled until the user connects one.
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 from importlib.resources import files
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
-from openftir.gui.main_window import MainWindow
-from openftir.gui.workers import wait_for_workers
+# The main window, plotting and processing stack are imported inside main(),
+# after the splash screen is up, so the splash appears immediately.
 
 
 def _light_palette() -> QPalette:
@@ -63,8 +65,45 @@ def main() -> int:
     apply_light_theme(app)
     app.setWindowIcon(app_icon())
     app.setDesktopFileName("openftir")
+
+    splash = None
+    if not os.environ.get("OPENFTIR_NO_SPLASH"):
+        from openftir.gui.splash import SplashScreen
+
+        splash = SplashScreen()
+        splash.show()
+        app.processEvents()
+    started = time.monotonic()
+
+    def stage(message: str, progress: float) -> None:
+        if splash is not None:
+            splash.advance(message, progress)
+
+    stage("Loading spectral processing…", 0.25)
+    import openftir.processing  # noqa: F401  (numpy/scipy)
+
+    stage("Loading instrument drivers…", 0.55)
+    from openftir.instruments import registry
+
+    registry.available_drivers()
+
+    stage("Preparing workspace…", 0.8)
+    from openftir.gui.main_window import MainWindow
+
     window = MainWindow()
+
+    stage("Ready", 1.0)
+    if splash is not None:
+        # Keep it up briefly on fast machines so it doesn't just flicker.
+        while time.monotonic() - started < 1.0:
+            app.processEvents()
+            time.sleep(0.02)
     window.show()
+    if splash is not None:
+        splash.finish(window)
+
+    from openftir.gui.workers import wait_for_workers
+
     code = app.exec()
     # Let in-flight instrument calls finish instead of aborting mid-thread.
     wait_for_workers()

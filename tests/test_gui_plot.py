@@ -186,3 +186,24 @@ def test_auto_label_respects_cutoff_wavenumber(qtbot):
         item.pos().x() for item in plot._auto_label_items if isinstance(item, pg.TextItem)
     ]
     assert len(labelled_positions_lower_cutoff) > len(labelled_positions)
+
+
+def test_plot_image_export_is_16_9_however_the_plot_is_stretched(qtbot, tmp_path):
+    import numpy as np
+    from PySide6.QtGui import QImage
+    from openftir.gui.spectrum_list import SpectrumEntry
+    from openftir.spectrum import Spectrum, YUnit
+    from PySide6.QtGui import QColor
+
+    widget = SpectrumPlotWidget()
+    qtbot.addWidget(widget)
+    widget.resize(1900, 500)  # very wide on screen
+    widget.show()
+    x = np.linspace(4000, 600, 800)
+    spectrum = Spectrum(x=x, y=100 - 50 * np.exp(-((x - 1700) / 20) ** 2), y_unit=YUnit.TRANSMITTANCE)
+    widget.refresh([SpectrumEntry(spectrum=spectrum, name="s", color=QColor("#1f77b4"))])
+    out = tmp_path / "plot.png"
+    widget.render_export(str(out))
+    image = QImage(str(out))
+    assert (image.width(), image.height()) == (1600, 900)
+    assert widget.width() == 1900  # the on-screen plot is untouched

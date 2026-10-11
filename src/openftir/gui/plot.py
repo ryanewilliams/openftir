@@ -22,7 +22,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from openftir.processing import Peak, auto_label_peaks
 from openftir.spectrum import XUnit, YUnit
@@ -268,7 +268,7 @@ class SpectrumPlotWidget(QWidget):
         if not units and basis:
             units = {basis[0].spectrum.y_unit}
         if not units:
-            return
+            units = {YUnit.TRANSMITTANCE}  # empty plot: the app's default format
 
         if len(units) == 1:
             unit = next(iter(units))
@@ -410,6 +410,38 @@ class SpectrumPlotWidget(QWidget):
             self._peak_items.append(label)
 
     # -- automatic peak labelling (View -> Auto-label peaks) ------------------------
+
+    def render_export(self, path: str, width: int = 1600, height: int = 900) -> None:
+        """Save the current plot (spectra, labels, stack mode) as a PNG or SVG
+        at a fixed size -- 16:9 by default -- whatever shape the on-screen
+        plot has been stretched to. Renders an offscreen copy so the visible
+        plot isn't resized."""
+        import pyqtgraph.exporters as exporters
+
+        copy = SpectrumPlotWidget()
+        try:
+            copy._stack_mode = self._stack_mode
+            copy._auto_label_enabled = self._auto_label_enabled
+            copy._auto_label_params = dict(self._auto_label_params)
+            # Lay the copy out at the export size without it ever appearing
+            # on screen; an unshown widget keeps its default 4:3 geometry.
+            copy.setAttribute(Qt.WA_DontShowOnScreen, True)
+            copy.resize(width, height)
+            copy.show()
+            QApplication.processEvents()
+            copy.refresh(self._entries, self._highlight_row)
+            QApplication.processEvents()
+            copy.plot_item.vb.autoRange()
+            if str(path).lower().endswith(".svg"):
+                exporter = exporters.SVGExporter(copy.plot_item)
+            else:
+                exporter = exporters.ImageExporter(copy.plot_item)
+                exporter.parameters()["width"] = width
+                exporter.parameters()["height"] = height
+            exporter.export(str(path))
+        finally:
+            copy.hide()
+            copy.deleteLater()
 
     def set_auto_label_enabled(self, enabled: bool) -> None:
         self._auto_label_enabled = enabled

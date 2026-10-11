@@ -77,8 +77,7 @@ class PeaksPanel(QWidget):
         self._table.setRowCount(len(self._rows))
         for row, (peak, kind) in enumerate(self._rows):
             self._table.setItem(row, 0, QTableWidgetItem(f"{peak.position:.0f}"))
-            value = 0.0 if abs(peak.height) < 0.05 else peak.height
-            self._table.setItem(row, 1, QTableWidgetItem(f"{value:.1f}" if abs(value) >= 1 else f"{value:.3f}"))
+            self._table.setItem(row, 1, QTableWidgetItem(self._format_value(peak.height)))
             self._table.setItem(row, 2, QTableWidgetItem(kind))
             if kind == "manual":
                 remove_btn = QPushButton("×")
@@ -88,6 +87,13 @@ class PeaksPanel(QWidget):
                 self._table.setCellWidget(row, 3, remove_btn)
             else:
                 self._table.setCellWidget(row, 3, None)
+
+    def _format_value(self, value: float) -> str:
+        """%T/%R to one decimal (tiny negative noise shown as 0.0, as in the
+        PDF report); absorbance to three decimals."""
+        if self._value_label in ("%T", "%R", "%T / A"):
+            return "0.0" if value < 0.05 else f"{value:.1f}"
+        return f"{value:.3f}"
 
     def set_value_label(self, label: str) -> None:
         """Column header for the peak value, e.g. "%T" or "Absorbance"."""
