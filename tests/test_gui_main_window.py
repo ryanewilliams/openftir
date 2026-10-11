@@ -74,32 +74,33 @@ def test_plot_view_box_has_no_pan_zoom_or_menu(qtbot):
     assert window.plot.plot_item.buttonsHidden is True
 
 
-def test_plot_aspect_stays_16_9_after_resize(qtbot):
+@pytest.mark.parametrize("size", [(1600, 1000), (1100, 750)])
+def test_simple_mode_plot_fills_the_width_beside_the_peaks_panel(qtbot, size):
+    # In the app the plot stretches to use the space (exports stay 16:9, see
+    # test_plot_image_export_is_16_9_however_the_plot_is_stretched).
     window = MainWindow()
     qtbot.addWidget(window)
     window.show()
-    window.resize(1600, 1200)
+    window._apply_mode("simple")
+    window.resize(*size)
     qtbot.wait(50)
+    body = window._simple_central._body
+    plot_box = window._central.plot_container.geometry()
+    panel = body.panel.geometry()
+    assert plot_box.height() == body.height()  # full height
+    assert panel.right() >= body.width() - 2  # no empty strip on the right
+    assert window.plot.width() == plot_box.width()  # plot fills its box
 
-    w, h = window.plot.width(), window.plot.height()
-    assert h > 0
-    assert abs((w / h) - (16 / 9)) < 0.05
 
-
-def test_plot_aspect_stays_16_9_at_small_window_size(qtbot):
+def test_advanced_mode_plot_spans_the_central_width(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.show()
-    # Smaller than the other resize test, but not so small that the docks'
-    # own minimum sizes dominate and swamp the plot down to a handful of
-    # pixels (at which point integer rounding -- not the aspect logic --
-    # is what you'd be measuring).
-    window.resize(1000, 800)
+    window._apply_mode("advanced")
+    window.resize(1400, 900)
     qtbot.wait(50)
-
-    w, h = window.plot.width(), window.plot.height()
-    assert w > 0 and h > 0
-    assert abs((w / h) - (16 / 9)) < 0.05
+    assert window.plot.width() == window._central.width()
+    assert window._central.tabs.height() >= 150
 
 
 def test_window_fits_screen_available_geometry_by_default(qtbot, monkeypatch):
