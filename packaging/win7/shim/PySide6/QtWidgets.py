@@ -35,3 +35,9 @@ def _is_row_visible(self, row):
 
 if not hasattr(QFormLayout, "isRowVisible"):
     QFormLayout.isRowVisible = _is_row_visible
+
+
+# Not Qt, but GUI-only: match pyqtgraph 0.14's axis ticks (see the module).
+from PySide6 import _pyqtgraph_ticks  # noqa: E402
+
+_pyqtgraph_ticks.install()
