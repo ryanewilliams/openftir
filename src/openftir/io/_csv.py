@@ -17,8 +17,8 @@ _DELIMITERS = [",", ";", "\t"]
 
 _HEADER_UNIT_RE = re.compile(r"^#\s*([a-zA-Z_][\w ]*?)\s*:\s*(.+)$")
 
-_XUNIT_BY_NAME = {u.value: u for u in XUnit} | {u.name.lower(): u for u in XUnit}
-_YUNIT_BY_NAME = {u.value: u for u in YUnit} | {u.name.lower(): u for u in YUnit}
+_XUNIT_BY_NAME = {**{u.value: u for u in XUnit}, **{u.name.lower(): u for u in XUnit}}
+_YUNIT_BY_NAME = {**{u.value: u for u in YUnit}, **{u.name.lower(): u for u in YUnit}}
 
 
 def _sniff_delimiter(sample_lines: list[str]) -> str | None:
