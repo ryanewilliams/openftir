@@ -3,6 +3,12 @@
 Each release's section here becomes its notes on the Releases page and in the
 app's "Update available" window.
 
+## 0.2.3
+
+- Sessions: Export → Session file (File → Save Session in Advanced mode) saves everything open in one file: spectra, names, colours, peak picks and the background. Open it later, or on another computer, to carry on where you left off.
+- OpenFTIR saves your session automatically as you work. If it closes unexpectedly, it offers to restore everything next time.
+- OpenFTIR always opens in Simple mode, even if Advanced mode was used last time.
+
 ## 0.2.2
 
 - Mac: Check for Updates works. It failed with a certificate error because the app couldn't find a list of trusted certificates. Mac users on 0.2.0 or 0.2.1 need to download this version by hand once; updates are automatic after that.

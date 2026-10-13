@@ -22,6 +22,18 @@ def _connect_simulated(qtbot, controller) -> None:
     assert controller.connected
 
 
+def test_always_opens_in_simple_mode_even_if_advanced_was_used_last(qtbot):
+    first = MainWindow()
+    qtbot.addWidget(first)
+    first._apply_mode("advanced")
+    first.close()
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._mode == "simple"
+    assert window._stack.currentWidget() is window._simple_central
+
+
 def test_default_mode_is_simple_on_fresh_settings(qtbot):
     settings = QSettings(*_SETTINGS_ARGS)
     settings.remove("ui/mode")

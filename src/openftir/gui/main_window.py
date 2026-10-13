@@ -440,10 +440,9 @@ class MainWindow(QMainWindow):
 
         self._mode: str | None = None
         self._dock_state = None
-        initial_mode = self.settings.value("ui/mode", "simple", type=str)
-        if initial_mode not in ("simple", "advanced"):
-            initial_mode = "simple"
-        self._apply_mode(initial_mode)
+        # Always open in Simple mode, whatever the last person used: shared
+        # lab computers shouldn't greet the next user with Advanced mode.
+        self._apply_mode("simple")
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -764,7 +763,6 @@ class MainWindow(QMainWindow):
         self._stack.updateGeometry()
 
         self._mode = mode
-        self.settings.setValue("ui/mode", mode)
         self.simple_mode_action.setChecked(mode == "simple")
         self.advanced_mode_action.setChecked(mode == "advanced")
 
