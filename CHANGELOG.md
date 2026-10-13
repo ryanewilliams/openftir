@@ -3,6 +3,11 @@
 Each release's section here becomes its notes on the Releases page and in the
 app's "Update available" window.
 
+## 0.2.1
+
+- Export PDF reports for several samples at once: Export → PDF reports for all samples…. Tick the samples, fix any names, pick a folder, and they all save together.
+- Double-click a sample at the bottom of the window to rename it.
+
 ## 0.2.0
 
 - OpenFTIR now updates itself: it checks for a new version on startup, or use Help → Check for Updates….
