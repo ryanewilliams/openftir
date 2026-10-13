@@ -20,10 +20,11 @@ from typing import Iterable
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetricsF
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
+from openftir.label_layout import LabelRequest, place_labels
 from openftir.processing import Peak, auto_label_peaks
 from openftir.spectrum import XUnit, YUnit
 from openftir.gui.spectrum_list import SpectrumEntry
@@ -67,21 +68,10 @@ _OVERLAY_PEN_WIDTH = 1.0
 # -- auto peak labelling (View -> Auto-label peaks) --------------------------
 _AUTO_LABEL_FONT_PT = 8
 _AUTO_LABEL_MARKER_SIZE = 5
-#: how far (as a fraction of the visible y span) a label is nudged away from
-#: its dip/peak -- below a %T dip, above an absorbance peak.
-_AUTO_LABEL_Y_OFFSET_FRACTION = 0.012
 #: extra room kept below the lowest dip (above the highest peak) for labels
 _AUTO_LABEL_HEADROOM_FRACTION = 0.07
-#: minimum x separation (as a fraction of the visible x span) between two
-#: placed labels -- the "simple greedy" overlap avoidance. Two labels only
-#: count as conflicting if they are close in BOTH x and y (see
-#: _AUTO_LABEL_MIN_Y_GAP_FRACTION): close in x but far apart in y means
-#: they belong to different, clearly-separated traces (e.g. stacked
-#: spectra, or two overlaid spectra with a close but not coincident band).
-_AUTO_LABEL_MIN_X_GAP_FRACTION = 0.016
-_AUTO_LABEL_MIN_Y_GAP_FRACTION = 0.06
-_AUTO_LABEL_X_MARGIN_FRACTION = 0.015
-_AUTO_LABEL_Y_MARGIN_FRACTION = 0.03
+#: leader lines from a moved label back to its peak
+_LEADER_COLOR = (110, 110, 110)
 
 _DEFAULT_AUTO_LABEL_PARAMS: dict = {
     "max_transmittance": 85.0,
@@ -142,6 +132,15 @@ class SpectrumPlotWidget(QWidget):
         self._auto_label_enabled = True
         self._auto_label_params: dict = dict(_DEFAULT_AUTO_LABEL_PARAMS)
         self._auto_label_items: list[pg.GraphicsObject] = []
+        # Markers, labels and leader lines (a subset of _auto_label_items):
+        # re-placed whenever the plot is resized, since layout is in pixels.
+        self._label_items: list[pg.GraphicsObject] = []
+        self._label_candidates: list[tuple[float, float, bool, QColor, bool]] = []
+        self._label_curves: list[tuple[np.ndarray, np.ndarray]] = []
+        self._relabel_timer = QTimer(self)
+        self._relabel_timer.setSingleShot(True)
+        self._relabel_timer.setInterval(40)
+        self._relabel_timer.timeout.connect(self._place_auto_labels)
         self._pick_mode = False
 
         layout = QVBoxLayout(self)
@@ -167,6 +166,9 @@ class SpectrumPlotWidget(QWidget):
         self.plot_item.setMenuEnabled(False)
         self.plot_item.hideButtons()  # the "A" auto-range corner button
         self.plot_item.enableAutoRange()
+        # Labels are laid out in pixels: redo them when the plot changes size.
+        view_box.sigResized.connect(self._schedule_relabel)
+        view_box.sigRangeChanged.connect(self._schedule_relabel)
 
         self._vline = pg.InfiniteLine(angle=90, movable=False)
         self._hline = pg.InfiniteLine(angle=0, movable=False)
@@ -309,6 +311,7 @@ class SpectrumPlotWidget(QWidget):
         # auto candidates are dropped when they coincide with a manual one
         # -- see _place_auto_labels for the priority rule.
         label_candidates: list[tuple[float, float, bool, QColor, bool]] = []
+        label_curves: list[tuple[np.ndarray, np.ndarray]] = []
 
         for k, (row, entry) in enumerate(visible):
             s = entry.spectrum
@@ -323,6 +326,7 @@ class SpectrumPlotWidget(QWidget):
             # itemChange looks up 'autoRangeEnabled' on the wrong object).
             curve = self.plot_item.plot(s.x, y, pen=pen, name=entry.name, autoDownsample=True)
             self._curves.append(curve)
+            label_curves.append((s.x, y))
 
             down = s.y_unit in _DOWN_UNITS
             manual_positions = list(entry.manual_peaks) if s.y_unit in (*_DOWN_UNITS, *_UP_UNITS) else []
@@ -355,8 +359,10 @@ class SpectrumPlotWidget(QWidget):
             # Empty plot: show the usual mid-IR window rather than pyqtgraph's
             # meaningless default 0-1 range.
             self.plot_item.vb.setRange(xRange=(600, 4000), yRange=(0, 100), padding=0.02)
+        self._label_candidates = label_candidates
+        self._label_curves = label_curves
         if label_candidates:
-            self._place_auto_labels(label_candidates)
+            self._place_auto_labels()
 
     def _reserve_label_headroom(self, visible, offsets, label_candidates) -> None:
         """Extend the autoranged view below (for %T dips) or above (for
@@ -465,97 +471,104 @@ class SpectrumPlotWidget(QWidget):
         self.refresh(self._entries, self._highlight_row)
 
     def clear_auto_labels(self) -> None:
+        self._relabel_timer.stop()
         for item in self._auto_label_items:
             self.plot_item.removeItem(item)
         self._auto_label_items.clear()
+        self._label_items.clear()
+        self._label_candidates = []
+        self._label_curves = []
 
-    def _place_auto_labels(self, candidates: list[tuple[float, float, bool, QColor, bool]]) -> None:
-        """Greedily place a marker + integer wavenumber label per candidate.
+    def _schedule_relabel(self, *_args) -> None:
+        if self._label_candidates:
+            self._relabel_timer.start()
 
-        Candidates are processed manual-first, then strongest (deepest dip /
-        tallest peak) first, skipping any whose position falls within
-        ``_AUTO_LABEL_MIN_X_GAP_FRACTION`` of an already-placed label -- a
-        simple way to avoid two labels overlapping when their peaks sit
-        close together, while keeping the more significant band of the
-        pair rather than whichever happens to come first left-to-right.
-        Manual picks are highest priority: an auto candidate that would
-        overlap one is dropped entirely (marker + label), but a manual
-        candidate's *marker* is always drawn even if its text label would
-        overlap another already-placed label (only the text is skipped
-        then) -- manual peaks are never silently hidden.
-        Label positions are clamped inside the current view so they never
-        overlap the plot frame, and the items are added with
+    def _place_auto_labels(self) -> None:
+        """Draw a marker + integer wavenumber label for each candidate,
+        placed clear of the traces, the other labels and the plot edge (see
+        ``openftir.label_layout``), with a leader line when a label had to
+        move away from its peak.
+
+        Manual picks go first and are always shown; auto candidates follow,
+        deepest dip / tallest peak first, so when space runs out it's the
+        weakest band that loses its label. Items are added with
         ``ignoreBounds=True`` so they never affect autorange.
         """
-        x_range, y_range = self.plot_item.vb.viewRange()
-        x_lo, x_hi = sorted(x_range)
-        y_lo, y_hi = sorted(y_range)
-        x_span = (x_hi - x_lo) or 1.0
-        y_span = (y_hi - y_lo) or 1.0
-        y_offset = y_span * _AUTO_LABEL_Y_OFFSET_FRACTION
-        min_x_gap = x_span * _AUTO_LABEL_MIN_X_GAP_FRACTION
-        min_y_gap = y_span * _AUTO_LABEL_MIN_Y_GAP_FRACTION
-        x_margin = x_span * _AUTO_LABEL_X_MARGIN_FRACTION
-        y_margin = y_span * _AUTO_LABEL_Y_MARGIN_FRACTION
+        for item in self._label_items:
+            self.plot_item.removeItem(item)
+            if item in self._auto_label_items:
+                self._auto_label_items.remove(item)
+        self._label_items.clear()
+        candidates = self._label_candidates
+        if not candidates:
+            return
+
+        vb = self.plot_item.vb
+        (x_lo, x_hi), (y_lo, y_hi) = vb.viewRange()
+        p0 = vb.mapFromView(QPointF(x_lo, y_lo))
+        p1 = vb.mapFromView(QPointF(x_hi, y_hi))
+        sx = (p1.x() - p0.x()) / ((x_hi - x_lo) or 1.0)
+        sy = (p1.y() - p0.y()) / ((y_hi - y_lo) or 1.0)
+        if not sx or not sy or vb.width() < 10 or vb.height() < 10:
+            return
+
+        def to_px(x, y):
+            return p0.x() + (np.asarray(x) - x_lo) * sx, p0.y() + (np.asarray(y) - y_lo) * sy
+
+        def to_data(px, py):
+            return x_lo + (px - p0.x()) / sx, y_lo + (py - p0.y()) / sy
 
         font = QFont()
         font.setPointSize(_AUTO_LABEL_FONT_PT)
         bold_font = QFont(font)
         bold_font.setBold(True)
 
-        # Depth/height below-100 or above-0 as a proxy for how significant a
-        # band is, so a conflict between two close peaks keeps the deeper
-        # (more important) one rather than whichever sorts first in x.
         def _significance(c: tuple[float, float, bool, QColor, bool]) -> float:
             _position, value, down, _color, _manual = c
             return (100.0 - value) if down else value
 
-        # Overlap test in real label extents: measure the text in pixels and
-        # convert to data units, so labels never collide at any window size.
-        metrics = QFontMetricsF(font)
-        px_w, px_h = self.plot_item.vb.viewPixelSize()
-        px_w, px_h = abs(px_w) or x_span / 600, abs(px_h) or y_span / 300
-        text_h = (metrics.height() + 2) * px_h
-
-        placed: list[tuple[float, float, float]] = []  # (x, y, half width)
-        # Manual picks always sort before auto ones -- see the docstring.
         ordered = sorted(candidates, key=lambda c: (0 if c[4] else 1, -_significance(c), c[0]))
+        texts = []
+        requests = []
         for position, value, down, color, manual in ordered:
-            label_y_raw = value - y_offset if down else value + y_offset
-            half_w = (metrics.horizontalAdvance(str(int(round(position)))) / 2 + 3) * px_w
-            conflict = any(
-                abs(position - px) < max(half_w + pw, min_x_gap) and abs(label_y_raw - py) < max(text_h, min_y_gap)
-                for px, py, pw in placed
-            )
-            if conflict and not manual:
-                continue
-            if not conflict:
-                placed.append((position, label_y_raw, half_w))
+            text = pg.TextItem(text=str(int(round(position))), color=color, anchor=(0.5, 0.0) if down else (0.5, 1.0))
+            text.setFont(bold_font if manual else font)
+            margin = text.textItem.document().documentMargin()
+            rect = text.textItem.boundingRect()
+            px, py = to_px(position, value)
+            requests.append(LabelRequest(
+                float(px), float(py), rect.width() - 2 * margin, rect.height() - 2 * margin,
+                below=down, must_show=manual,
+            ))
+            texts.append((text, margin))
 
-            label_y = min(max(label_y_raw, y_lo + y_margin), y_hi - y_margin)
-            label_x = min(max(position, x_lo + x_margin), x_hi - x_margin)
+        curves = [to_px(x, y) for x, y in self._label_curves]
+        bounds = (2.0, 2.0, vb.width() - 2.0, vb.height() - 2.0)
+        placements = place_labels(requests, curves, bounds, marker_radius=_MANUAL_LABEL_MARKER_SIZE / 2)
 
+        def add(item):
+            self.plot_item.addItem(item, ignoreBounds=True)
+            self._auto_label_items.append(item)
+            self._label_items.append(item)
+
+        for (position, value, down, color, manual), (text, margin), placement in zip(ordered, texts, placements):
+            if placement is None:
+                continue  # an auto band with nowhere to put its label
             marker_symbol = ("t" if down else "t1") if manual else "o"
             marker_size = _MANUAL_LABEL_MARKER_SIZE if manual else _AUTO_LABEL_MARKER_SIZE
-            marker = pg.ScatterPlotItem(
+            add(pg.ScatterPlotItem(
                 x=[position], y=[value], symbol=marker_symbol, size=marker_size,
                 brush=pg.mkBrush(color), pen=pg.mkPen(None),
-            )
-            self.plot_item.addItem(marker, ignoreBounds=True)
-            self._auto_label_items.append(marker)
-
-            if conflict and manual:
-                continue  # marker shown either way; only the overlapping text is skipped
-
-            text = pg.TextItem(
-                text=str(int(round(position))),
-                color=color,
-                anchor=(0.5, 0.0) if down else (0.5, 1.0),
-            )
-            text.setFont(bold_font if manual else font)
-            text.setPos(label_x, label_y)
-            self.plot_item.addItem(text, ignoreBounds=True)
-            self._auto_label_items.append(text)
+            ))
+            ax_, ay_ = placement.anchor_point(down)
+            if placement.leader:
+                lx, ly = to_data(ax_, ay_)
+                leader = pg.PlotCurveItem(x=[position, lx], y=[value, ly], pen=_cosmetic_pen(_LEADER_COLOR, width=0.8))
+                add(leader)
+            # The text item's box includes a document margin around the glyphs.
+            tx, ty = to_data(ax_, ay_ - margin if down else ay_ + margin)
+            text.setPos(tx, ty)
+            add(text)
 
     # -- baseline preview -----------------------------------------------------------
 

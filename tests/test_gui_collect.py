@@ -42,6 +42,8 @@ def test_background_then_sample_collect_ratios(qtbot, monkeypatch):
     assert name == "Test Sample"
     assert spectrum.y_unit in (YUnit.ABSORBANCE, YUnit.TRANSMITTANCE)
     assert len(spectrum) > 0
+    # The collection time is recorded (shown as the PDF report's Date).
+    assert spectrum.acquired is not None
 
 
 def test_cancel_stops_collection(qtbot):

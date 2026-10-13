@@ -33,6 +33,7 @@ from matplotlib.lines import Line2D
 matplotlib.rcParams["pdf.fonttype"] = 42
 
 from openftir import __version__
+from openftir.label_layout import LabelRequest, place_labels
 from openftir.processing import auto_label_peaks
 from openftir.spectrum import local_naive, Spectrum, YUnit
 
@@ -300,42 +301,56 @@ def _draw_spectrum(fig: Figure, spectrum: Spectrum, rows: list[dict], plot_top: 
         label.set_family(SERIF)
         label.set_fontsize(8.5)
 
-    # Collision-avoidance peak labelling: manual peaks are drawn first (they
-    # always win a label slot), then auto peaks in order of prominence --
-    # deepest dip first for %T/%R, tallest band first for absorbance.
+    _draw_peak_labels(fig, ax, spectrum, rows, down)
+    return ax
+
+
+def _draw_peak_labels(fig: Figure, ax, spectrum: Spectrum, rows: list[dict], down: bool) -> None:
+    """Marker + wavenumber label for every peak in the table, placed clear of
+    the trace and each other (see openftir.label_layout). Manual peaks go
+    first, then auto peaks deepest dip / tallest band first."""
     fig.canvas.draw()
+    fig_h = fig.bbox.height
+    to_px = ax.transData.transform
+    from_px = ax.transData.inverted().transform
+    x_lo, x_hi = sorted(ax.get_xlim())
+
     order = sorted(
-        rows,
+        (r for r in rows if x_lo <= r["position"] <= x_hi),
         key=lambda r: (0 if r["manual"] else 1, r["value"] if down else -r["value"]),
     )
-    placed: list[tuple[float, float]] = []
+    texts = []
+    requests = []
     for r in order:
+        text = ax.text(
+            0, 0, f"{r['position']:.0f}", fontsize=7.5, color="black", family=SERIF,
+            fontweight="bold" if r["manual"] else "normal", ha="center", va="top" if down else "bottom",
+        )
+        extent = text.get_window_extent()
+        X, Y = to_px((r["position"], r["value"]))
+        requests.append(LabelRequest(X, fig_h - Y, extent.width, extent.height, below=down, must_show=r["manual"]))
+        texts.append(text)
+
+    curve_px = to_px(np.column_stack([spectrum.x, spectrum.y]))
+    curves = [(curve_px[:, 0], fig_h - curve_px[:, 1])]
+    box = ax.bbox
+    bounds = (box.x0 + 2, fig_h - box.y1 + 2, box.x1 - 2, fig_h - box.y0 - 2)
+    placements = place_labels(requests, curves, bounds, marker_radius=3.0 * fig.dpi / 72)
+
+    for r, req, text, placement in zip(order, requests, texts, placements):
+        if placement is None:
+            text.remove()
+            continue
         pos, val = r["position"], r["value"]
-        if pos < x_min or pos > x_max:
-            continue
-        X, Y = ax.transData.transform((pos, val))
-        if any(abs(X - px) < 26 and abs(Y - py) < 14 for px, py in placed):
-            continue
-        placed.append((X, Y))
         if r["manual"]:
-            ax.plot(pos, val, "v", ms=5.0, color="black", mfc="black")
-            weight = "bold"
+            ax.plot(pos, val, "v" if down else "^", ms=5.0, color="black", mfc="black")
         else:
             ax.plot(pos, val, "o", ms=2.6, color="black")
-            weight = "normal"
-        ax.annotate(
-            f"{pos:.0f}",
-            (pos, val),
-            xytext=(0, -6),
-            textcoords="offset points",
-            ha="center",
-            va="top",
-            fontsize=7.5,
-            color="black",
-            fontweight=weight,
-            family=SERIF,
-        )
-    return ax
+        ax_, ay_ = placement.anchor_point(req.below)
+        tx, ty = from_px((ax_, fig_h - ay_))
+        text.set_position((tx, ty))
+        if placement.leader:
+            ax.plot([pos, tx], [val, ty], color="#666666", lw=0.4, zorder=1.5)
 
 
 def _table_header_label(spectrum: Spectrum) -> str:

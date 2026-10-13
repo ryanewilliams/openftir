@@ -156,3 +156,43 @@ def test_values_below_0_05_print_as_zero():
     assert _fmt_value(-0.2) == "0.0"
     assert _fmt_value(0.06) == "0.1"
     assert _fmt_value(4.2) == "4.2"
+
+
+def test_every_table_peak_gets_a_plot_label_clear_of_the_trace():
+    # Regression: two bands close together (limonene's 2966 and 2856 cm-1)
+    # made the report skip one label while still listing it in the table,
+    # and labels could sit on top of the trace.
+    from matplotlib.backends.backend_pdf import FigureCanvasPdf
+    from matplotlib.figure import Figure
+
+    from openftir.instruments.base import CollectParams
+    from openftir.instruments.simulated import SimulatedInstrument
+    from openftir.label_layout import _Curve
+    from openftir.processing import ratio
+    from openftir.report import pdf
+
+    np.random.seed(3)
+    with SimulatedInstrument() as inst:
+        inst.set_sample("limonene")
+        bp = CollectParams(scans=16, resolution=4.0)
+        bp.extra["purpose"] = "background"
+        bg = inst.collect_single_beam(bp)
+        sample = inst.collect_single_beam(CollectParams(scans=16, resolution=4.0))
+    spectrum = ratio(sample, bg, to=YUnit.TRANSMITTANCE)
+
+    rows = pdf._merged_peak_rows(spectrum, [], None)
+    assert len(rows) >= 4
+    fig = Figure(figsize=(8.5, 11))
+    FigureCanvasPdf(fig)
+    ax = pdf._draw_spectrum(fig, spectrum, rows, 0.85)
+    fig.canvas.draw()
+
+    labels = {t.get_text(): t for t in ax.texts}
+    assert sorted(labels) == sorted(f"{r['position']:.0f}" for r in rows)
+
+    fig_h = fig.bbox.height
+    px = ax.transData.transform(np.column_stack([spectrum.x, spectrum.y]))
+    curve = _Curve(px[:, 0], fig_h - px[:, 1])
+    for text in labels.values():
+        box = text.get_window_extent()
+        assert not curve.hits(box.x0, fig_h - box.y1, box.x1, fig_h - box.y0), text.get_text()
