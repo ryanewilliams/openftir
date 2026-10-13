@@ -54,14 +54,11 @@ jobs:
           name: OpenFTIR-${{ runner.os }}
           path: ${{ matrix.asset }}
 
-  windows7:
-    uses: ./.github/workflows/win7.yml
-
-  # Tagged builds only: publish all five downloads as one GitHub Release.
+  # Tagged builds only: publish all the downloads as one GitHub Release.
   # The app's updater (openftir/updater.py) installs from the latest one.
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, windows7]
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

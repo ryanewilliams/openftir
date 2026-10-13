@@ -58,7 +58,6 @@ Download the latest version for your computer from the [Releases page](https://g
 | Computer | Download |
 |---|---|
 | Windows 10/11 | `OpenFTIR-windows.zip` |
-| Windows 7 | `OpenFTIR-win7-32bit.zip` (any Windows 7 PC) or `OpenFTIR-win7-64bit.zip` |
 | Mac (Apple silicon) | `OpenFTIR-macos.zip` |
 | Linux | `OpenFTIR-linux.tar.gz` |
 

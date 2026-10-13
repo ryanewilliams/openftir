@@ -23,11 +23,9 @@ def test_version_comparison():
 
 
 def test_asset_name_matches_each_build():
-    assert updater.asset_name("win32", (3, 12)) == "OpenFTIR-windows.zip"
-    assert updater.asset_name("win32", (3, 8), bits=32) == "OpenFTIR-win7-32bit.zip"
-    assert updater.asset_name("win32", (3, 8), bits=64) == "OpenFTIR-win7-64bit.zip"
-    assert updater.asset_name("darwin", (3, 12)) == "OpenFTIR-macos.zip"
-    assert updater.asset_name("linux", (3, 12)) == "OpenFTIR-linux.tar.gz"
+    assert updater.asset_name("win32") == "OpenFTIR-windows.zip"
+    assert updater.asset_name("darwin") == "OpenFTIR-macos.zip"
+    assert updater.asset_name("linux") == "OpenFTIR-linux.tar.gz"
 
 
 def test_install_location():

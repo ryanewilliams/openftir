@@ -10,7 +10,6 @@ app's "Update available" window.
 - Peak labels no longer sit on top of the spectrum or each other. A label that has to move gets a thin line back to its peak.
 - PDF reports label every peak listed in the table (close peaks could lose their label).
 - PDF reports show the date a spectrum was collected.
-- A separate Windows 7 version (32- and 64-bit) that runs without installing anything.
 
 ## 0.1.0
 

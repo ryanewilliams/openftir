@@ -1,7 +1,7 @@
 """Self-update from the project's GitHub Releases.
 
 The packaged app checks the latest release, and if it is newer downloads the
-archive for this build (Windows, Windows 7 32/64-bit, macOS or Linux),
+archive for this build (Windows, macOS or Linux),
 unpacks it next to the installed copy and hands over to a small helper
 script. The script waits for OpenFTIR to exit, swaps the folders (keeping
 the old copy until the new one is in place), reopens the app and tidies up.
@@ -17,7 +17,6 @@ import os
 import re
 import shlex
 import shutil
-import struct
 import subprocess
 import sys
 import tarfile
@@ -83,12 +82,9 @@ def is_packaged() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def asset_name(platform: str = sys.platform, python: tuple[int, int] = sys.version_info[:2], bits: int | None = None) -> str:
+def asset_name(platform: str = sys.platform) -> str:
     """The release download that matches this build."""
     if platform == "win32":
-        if python < (3, 9):  # the Windows 7 build is frozen with Python 3.8
-            bits = bits or struct.calcsize("P") * 8
-            return f"OpenFTIR-win7-{bits}bit.zip"
         return "OpenFTIR-windows.zip"
     if platform == "darwin":
         return "OpenFTIR-macos.zip"
@@ -218,7 +214,7 @@ def unpack(archive: Path, staging: Path, platform: str = sys.platform) -> Path:
 
 
 def _batch_script(old: Path, new: Path, staging: Path, pid: int, exe_name: str) -> str:
-    # Plain cmd.exe only (works on Windows 7) and no ( ) blocks around paths,
+    # Plain cmd.exe only, and no ( ) blocks around paths,
     # which break on folders like "Program Files (x86)". ping is the
     # portable sleep: timeout.exe refuses to run without a console.
     return "\r\n".join([
