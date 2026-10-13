@@ -23,6 +23,8 @@ import sys
 import tarfile
 import tempfile
 import threading
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -146,15 +148,47 @@ def _open(request: urllib.request.Request, timeout: float):
     return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
 
 
+#: every download a release publishes (see .github/workflows/release.yml)
+_ASSET_NAMES = ("OpenFTIR-windows.zip", "OpenFTIR-macos.zip", "OpenFTIR-linux.tar.gz")
+
+
 def fetch_latest_release(timeout: float = 15.0) -> Release:
-    """The newest published release (GitHub's API needs no login for a
-    public repository)."""
+    """The newest published release.
+
+    Uses GitHub's API (no login needed for a public repository). That
+    allows 60 requests an hour per network address, which a busy shared
+    connection can use up; then fall back to the Releases web page, which
+    gives the version and download links but no notes or checksums.
+    """
     try:
         with _open(_request(LATEST_RELEASE_API, "application/vnd.github+json"), timeout) as resp:
-            data = json.load(resp)
+            return release_from_api(json.load(resp))
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (403, 429):
+            raise UpdateError(f"Couldn't reach GitHub to check for updates ({exc}).") from exc
     except OSError as exc:
         raise UpdateError(f"Couldn't reach GitHub to check for updates ({exc}).") from exc
-    return release_from_api(data)
+    return _latest_from_releases_page(timeout)
+
+
+def _latest_from_releases_page(timeout: float) -> Release:
+    """/releases/latest redirects to /releases/tag/<tag>."""
+    try:
+        with _open(_request(RELEASES_PAGE, "text/html"), timeout) as resp:
+            final_url = resp.geturl()
+    except OSError as exc:
+        raise UpdateError(f"Couldn't reach GitHub to check for updates ({exc}).") from exc
+    match = re.search(r"/releases/tag/([^/?#]+)", final_url)
+    if not match:
+        raise UpdateError("Couldn't find the latest release on GitHub.")
+    tag = urllib.parse.unquote(match.group(1))
+    base = f"https://github.com/{REPO}/releases/download/{tag}"
+    return Release(
+        version=tag.lstrip("v"),
+        notes="",
+        page_url=final_url,
+        assets={name: Asset(name, f"{base}/{name}", 0) for name in _ASSET_NAMES},
+    )
 
 
 def release_from_api(data: dict) -> Release:

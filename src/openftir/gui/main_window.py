@@ -973,7 +973,9 @@ class MainWindow(QMainWindow):
     # -- list dock / spectrum chip actions -----------------------------------------------
 
     def _rename_current(self, row: int | None = None) -> None:
-        if row is None:
+        # Buttons and menu items pass their checked state (False), which
+        # Python would treat as row 0; fall back to the selection instead.
+        if row is None or isinstance(row, bool):
             row = self._current_row()
         if row is None:
             return
@@ -983,7 +985,9 @@ class MainWindow(QMainWindow):
             self.model.setData(self.model.index(row), name.strip(), Qt.EditRole)
 
     def _recolor_current(self, row: int | None = None) -> None:
-        if row is None:
+        # Buttons and menu items pass their checked state (False), which
+        # Python would treat as row 0; fall back to the selection instead.
+        if row is None or isinstance(row, bool):
             row = self._current_row()
         if row is None:
             return
@@ -1063,7 +1067,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open", "Some files could not be opened:\n\n" + "\n".join(errors))
 
     def _on_save_selected(self, row: int | None = None) -> None:
-        if row is None:
+        # Buttons and menu items pass their checked state (False), which
+        # Python would treat as row 0; fall back to the selection instead.
+        if row is None or isinstance(row, bool):
             row = self._current_row()
         if row is None:
             QMessageBox.information(self, "Save", "Select a spectrum first.")
@@ -1100,7 +1106,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export Plot", f"Could not export plot:\n{exc}")
 
     def _on_export_pdf_report(self, row: int | None = None) -> None:
-        if row is None:
+        # Buttons and menu items pass their checked state (False), which
+        # Python would treat as row 0; fall back to the selection instead.
+        if row is None or isinstance(row, bool):
             row = self._current_row()
         if row is None:
             QMessageBox.information(self, "Export PDF Report", "Select a spectrum first.")

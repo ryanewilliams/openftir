@@ -6,6 +6,8 @@ app's "Update available" window.
 ## 0.2.2
 
 - Mac: Check for Updates works. It failed with a certificate error because the app couldn't find a list of trusted certificates. Mac users on 0.2.0 or 0.2.1 need to download this version by hand once; updates are automatic after that.
+- File → Export PDF Report and File → Save now use the selected spectrum. They used the first one in the list (usually the background), so the report complained it wasn't %Transmittance. The Rename and Colour buttons in Advanced mode had the same problem.
+- Update checks still work when GitHub's limit for a shared network connection has been reached.
 
 ## 0.2.1
 

@@ -203,3 +203,35 @@ def test_bulk_export_entry_in_the_simple_export_menu(qtbot, monkeypatch):
     action = next(a for a in menu.actions() if "all samples" in a.text())
     action.trigger()
     assert called
+
+
+def test_file_menu_items_act_on_the_selected_spectrum_not_the_first(qtbot, tmp_path, monkeypatch):
+    # Regression: menu items pass their checked state (False) to the
+    # handler, which treated it as row 0 -- usually the background -- so
+    # File -> Export PDF Report complained it wasn't %Transmittance.
+    from PySide6.QtGui import QAction
+
+    from openftir import report
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    # The background comes first, as in a normal session (collected first).
+    background = Spectrum(
+        x=np.linspace(4000, 600, 500), y=np.ones(500), x_unit=XUnit.WAVENUMBER, y_unit=YUnit.SINGLE_BEAM
+    )
+    window.model.add(background, name="Background", visible=False)
+    sample_row = window.model.add(_make_spectrum("Aspirin"), name="Aspirin")
+    window.list_view.setCurrentIndex(window.model.index(sample_row))
+
+    exported = []
+    monkeypatch.setattr(report, "export_report_pdf", lambda path, spectrum, **kw: exported.append(kw["title"]))
+    _accept_report_dialog(monkeypatch)
+    _stub_save_path(monkeypatch, tmp_path)
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: warnings.append(a))
+
+    action = next(a for a in window.findChildren(QAction) if a.text() == "Export PDF &Report...")
+    action.trigger()
+
+    assert warnings == []
+    assert exported == ["Aspirin"]

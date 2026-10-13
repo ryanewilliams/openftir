@@ -137,3 +137,30 @@ def test_https_uses_a_real_certificate_store():
     ctx = updater.ssl_context()
     assert isinstance(ctx, ssl.SSLContext)
     assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_falls_back_to_the_releases_page_when_rate_limited(monkeypatch):
+    import io
+    import urllib.error
+
+    class FakePage:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def geturl(self):
+            return f"https://github.com/{updater.REPO}/releases/tag/v9.9.9"
+
+    def fake_open(request, timeout):
+        if request.full_url == updater.LATEST_RELEASE_API:
+            raise urllib.error.HTTPError(request.full_url, 403, "rate limit exceeded", {}, io.BytesIO())
+        assert request.full_url == updater.RELEASES_PAGE
+        return FakePage()
+
+    monkeypatch.setattr(updater, "_open", fake_open)
+    release = updater.fetch_latest_release()
+    assert release.version == "9.9.9"
+    asset = release.assets[updater.asset_name()]
+    assert asset.url.endswith(f"/releases/download/v9.9.9/{updater.asset_name()}")
