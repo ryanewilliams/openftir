@@ -15,10 +15,12 @@ modes never duplicates or loses anything; see ``_apply_mode``.
 
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QRect, QSettings, QSize, Qt
+from PySide6.QtCore import QRect, QSettings, QSize, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -46,6 +48,7 @@ from PySide6.QtWidgets import (
 from openftir import __version__, processing, report
 from openftir.gui.dialogs.bulk_report_dialog import BulkReportDialog, BulkReportItem
 from openftir.gui.updates import UpdateController
+from openftir.session import Session, SessionEntry, load_session, save_session
 from openftir.spectrum import Spectrum, XUnit, YUnit
 from openftir.gui import file_dialogs
 from openftir.gui.collect_controller import CollectController
@@ -72,6 +75,8 @@ from openftir.gui.spectrum_list import ColorRole, SpectrumListModel
 from openftir.processing import Peak
 
 _MAX_RECENT_FILES = 10
+#: autosave this long after the last change
+_AUTOSAVE_DELAY_MS = 5000
 _BASELINE_METHODS = {
     "als": processing.baseline_als,
     "polynomial": processing.baseline_polynomial,
@@ -331,7 +336,9 @@ class _SimpleCentralArea(QWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, autosave: bool = False):
+        """``autosave``: keep a copy of the open session in the app's data
+        folder (only the real app turns this on -- see openftir.gui.app)."""
         super().__init__(parent)
         self.setWindowTitle("OpenFTIR")
         self.setAcceptDrops(True)
@@ -403,6 +410,7 @@ class MainWindow(QMainWindow):
         self.simple_bottom_bar.open_requested.connect(self._on_open)
         self.simple_bottom_bar.export_pdf_requested.connect(self._on_export_pdf_report)
         self.simple_bottom_bar.export_all_pdf_requested.connect(self._on_export_pdf_reports)
+        self.simple_bottom_bar.export_session_requested.connect(lambda: self._on_save_session())
         self.simple_bottom_bar.export_data_requested.connect(self._on_save_selected)
 
         self.simple_settings_strip = SimpleSettingsStrip(self.collect_controller, self.simple_top_bar, self)
@@ -436,6 +444,17 @@ class MainWindow(QMainWindow):
         if initial_mode not in ("simple", "advanced"):
             initial_mode = "simple"
         self._apply_mode(initial_mode)
+
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.setInterval(_AUTOSAVE_DELAY_MS)
+        self._autosave_timer.timeout.connect(self._write_autosave)
+        self._autosave_enabled = autosave
+        if autosave:
+            for sig in (self.model.rowsInserted, self.model.rowsRemoved, self.model.dataChanged,
+                        self.model.modelReset, self.model.visibility_changed,
+                        self.collect_controller.background_changed):
+                sig.connect(self._autosave_timer.start)
 
     # -- docks ------------------------------------------------------------------
 
@@ -556,6 +575,11 @@ class MainWindow(QMainWindow):
         export_reports_action = QAction("Export PDF Reports for &All Samples...", self)
         export_reports_action.triggered.connect(self._on_export_pdf_reports)
         file_menu.addAction(export_reports_action)
+        file_menu.addSeparator()
+        save_session_action = QAction("Save Sess&ion...", self)
+        save_session_action.setShortcut(QKeySequence("Ctrl+Alt+S"))
+        save_session_action.triggered.connect(lambda: self._on_save_session())
+        file_menu.addAction(save_session_action)
 
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
@@ -1040,6 +1064,16 @@ class MainWindow(QMainWindow):
         errors = []
         loaded_any = False
         for path in paths:
+            if str(path).lower().endswith(".ofjson"):
+                try:
+                    session = load_session(path)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{path}: {exc}")
+                    continue
+                if session is not None:
+                    if self._open_session(session):
+                        self._add_recent_file(path)
+                    continue
             try:
                 spectra = io_mod.load(path)
             except Exception as exc:  # noqa: BLE001 - surfaced to the user, never crashes
@@ -1262,6 +1296,127 @@ class MainWindow(QMainWindow):
                 taken.add(candidate)
                 return candidate
             n += 1
+
+    # -- sessions (everything open, in one file) -------------------------------------
+
+    def _current_session(self) -> Session:
+        entries = self.model.entries()
+        background = self.collect_controller.background
+        bg_index = next((i for i, e in enumerate(entries) if e.spectrum is background), None)
+        return Session(
+            entries=[
+                SessionEntry(e.spectrum, e.name, e.color.name(), e.visible, list(e.manual_peaks)) for e in entries
+            ],
+            background=bg_index,
+            background_time=self.collect_controller.background_time if bg_index is not None else None,
+            selected=self._current_row(),
+        )
+
+    def _on_save_session(self) -> None:
+        if self.model.rowCount() == 0:
+            QMessageBox.information(self, "Save Session", "There's nothing open to save yet.")
+            return
+        default_name = f"OpenFTIR session {datetime.now():%Y-%m-%d %H%M}.ofjson"
+        path = file_dialogs.get_save_path(self, "Save Session", default_name, "OpenFTIR session (*.ofjson)")
+        if not path:
+            return
+        try:
+            save_session(self._current_session(), path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Save Session", f"Could not save the session:\n{exc}")
+            return
+        self._add_recent_file(path)
+        self.statusBar().showMessage(f"Session saved to {path}")
+
+    def _open_session(self, session: Session, ask: bool = True) -> bool:
+        """Put a saved session back. With spectra already open, ask whether
+        to replace them or add the session's alongside. False if cancelled."""
+        replace = True
+        if ask and self.model.rowCount() > 0:
+            box = QMessageBox(self)
+            box.setWindowTitle("Open Session")
+            box.setIcon(QMessageBox.Question)
+            box.setText(f"Open this session's {len(session.entries)} spectra?")
+            box.setInformativeText("Replace closes what's open now; spectra you haven't saved will be lost.")
+            replace_btn = box.addButton("Replace", QMessageBox.AcceptRole)
+            add_btn = box.addButton("Add to open spectra", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is add_btn:
+                replace = False
+            elif box.clickedButton() is not replace_btn:
+                return False
+        if replace:
+            self.model.clear()
+            self.collect_controller.clear_background()
+
+        first_row = self.model.rowCount()
+        for e in session.entries:
+            row = self.model.add(e.spectrum, name=e.name, visible=e.visible, manual_peaks=e.manual_peaks)
+            if e.color and QColor(e.color).isValid():
+                self.model.setData(self.model.index(row), QColor(e.color), ColorRole)
+        if session.background is not None and (replace or self.collect_controller.background is None):
+            self.collect_controller.restore_background(
+                session.entries[session.background].spectrum, session.background_time
+            )
+        self.collect_controller.skip_sample_names(e.name for e in session.entries)
+        self.plot.full_scale()
+        if session.selected is not None:
+            self.list_view.setCurrentIndex(self.model.index(first_row + session.selected))
+        elif self.model.rowCount():
+            self.list_view.setCurrentIndex(self.model.index(self.model.rowCount() - 1))
+        return True
+
+    @staticmethod
+    def autosave_path() -> Path:
+        base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation) or str(Path.home() / ".openftir")
+        return Path(base) / "autosave.ofjson"
+
+    def _write_autosave(self) -> None:
+        if not self._autosave_enabled:
+            return
+        path = self.autosave_path()
+        try:
+            if self.model.rowCount() == 0:
+                path.unlink(missing_ok=True)  # nothing open: nothing to offer back
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            save_session(self._current_session(), path)
+        except Exception:  # noqa: BLE001 - autosave must never interrupt work
+            pass
+
+    def offer_to_restore_autosave(self) -> None:
+        """On startup: offer back what was open when the app last closed."""
+        path = self.autosave_path()
+        if not path.exists() or self.model.rowCount():
+            return
+        try:
+            session = load_session(path)
+        except Exception:  # noqa: BLE001 - unreadable autosave: just start fresh
+            session = None
+        if session is None or not session.entries:
+            return
+        samples = [e for e in session.entries if e.spectrum.y_unit != YUnit.SINGLE_BEAM]
+        when = f" ({session.saved_at:%d %b, %H:%M})" if session.saved_at else ""
+        count = len(samples) or len(session.entries)
+        noun = "spectrum was" if count == 1 else "spectra were"
+        box = QMessageBox(self)
+        box.setWindowTitle("Restore last session?")
+        box.setIcon(QMessageBox.Question)
+        box.setText("Pick up where you left off?")
+        box.setInformativeText(f"{count} {noun} open when OpenFTIR last closed{when}.")
+        restore = box.addButton("Restore", QMessageBox.AcceptRole)
+        box.addButton("Start fresh", QMessageBox.RejectRole)
+        box.setDefaultButton(restore)
+        box.exec()
+        if box.clickedButton() is restore:
+            self._open_session(session, ask=False)
+        else:
+            # Kept one step back, just in case.
+            try:
+                os.replace(path, path.with_name("autosave-previous.ofjson"))
+            except OSError:
+                pass
 
     def _add_recent_file(self, path: str) -> None:
         recent = self.settings.value("recentFiles", [], type=list)
@@ -1514,6 +1669,8 @@ class MainWindow(QMainWindow):
         self.setGeometry(x, y, width, height)
 
     def closeEvent(self, event) -> None:
+        self._autosave_timer.stop()
+        self._write_autosave()
         self.settings.setValue("windowGeometry", self.saveGeometry())
         self.settings.setValue("windowRect", self.frameGeometry())
         super().closeEvent(event)

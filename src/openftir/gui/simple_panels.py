@@ -613,6 +613,7 @@ class SimpleBottomBar(QWidget):
     #: _on_save_selected.
     export_pdf_requested = Signal()
     export_all_pdf_requested = Signal()
+    export_session_requested = Signal()
     export_data_requested = Signal()
 
     def __init__(self, model: SpectrumListModel, controller: CollectController, parent=None):
@@ -672,6 +673,10 @@ class SimpleBottomBar(QWidget):
         data_action = QAction("Data file…", self.export_btn)
         data_action.triggered.connect(self.export_data_requested.emit)
         export_menu.addAction(data_action)
+        export_menu.addSeparator()
+        session_action = QAction("Session file (everything open)…", self.export_btn)
+        session_action.triggered.connect(self.export_session_requested.emit)
+        export_menu.addAction(session_action)
         self.export_btn.setMenu(export_menu)
         outer.addWidget(self.export_btn, 0)
 

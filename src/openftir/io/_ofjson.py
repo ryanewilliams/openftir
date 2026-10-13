@@ -16,7 +16,8 @@ is a single JSON object::
           "history": ["...", ...]
         },
         ...
-      ]
+      ],
+      "session": {...}   (optional: see openftir.session)
     }
 
 Every field on ``Spectrum`` round-trips exactly (modulo JSON's float
@@ -80,14 +81,25 @@ def _dict_to_spectrum(d: dict, path_for_errors: str) -> Spectrum:
     )
 
 
-def read_ofjson(path: str | os.PathLike) -> list[Spectrum]:
+def read_document(path: str | os.PathLike) -> tuple[list[Spectrum], dict | None]:
+    """The spectra in an .ofjson file, plus its ``"session"`` block (the
+    app's names, colours, background... -- see ``openftir.session``) if it
+    has one."""
     path = os.fspath(path)
     with open(path, "r", encoding="utf-8") as fh:
         try:
             doc = json.load(fh)
         except json.JSONDecodeError as exc:
             raise FormatError(f"{path}: not valid JSON ({exc})") from exc
+    session = doc.get("session") if isinstance(doc, dict) else None
+    return _spectra_from_doc(doc, path), session if isinstance(session, dict) else None
 
+
+def read_ofjson(path: str | os.PathLike) -> list[Spectrum]:
+    return read_document(path)[0]
+
+
+def _spectra_from_doc(doc, path: str) -> list[Spectrum]:
     if isinstance(doc, dict) and "spectra" in doc:
         entries = doc["spectra"]
     elif isinstance(doc, dict) and "x" in doc and "y" in doc:
@@ -103,11 +115,18 @@ def read_ofjson(path: str | os.PathLike) -> list[Spectrum]:
     return [_dict_to_spectrum(e, path) for e in entries]
 
 
-def write_ofjson(spectra: list[Spectrum], path: str | os.PathLike) -> None:
+def write_ofjson(spectra: list[Spectrum], path: str | os.PathLike, session: dict | None = None) -> None:
+    """Write ``spectra`` (and optionally a ``"session"`` block). The file is
+    written beside the target and then renamed over it, so an interrupted
+    save never leaves a half-written file."""
     path = os.fspath(path)
     doc = {
         "openftir_ofjson_version": _VERSION,
         "spectra": [_spectrum_to_dict(s) for s in spectra],
     }
-    with open(path, "w", encoding="utf-8") as fh:
+    if session is not None:
+        doc["session"] = session
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=1)
+    os.replace(tmp, path)

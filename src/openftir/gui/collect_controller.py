@@ -352,6 +352,14 @@ class CollectController(QObject):
         self._sample_counter += 1
         return f"Sample {self._sample_counter}"
 
+    def skip_sample_names(self, names) -> None:
+        """Carry on numbering after any 'Sample N' in ``names`` (a reopened
+        session), so new samples don't reuse a number."""
+        for name in names:
+            parts = str(name).split()
+            if len(parts) == 2 and parts[0] == "Sample" and parts[1].isdigit():
+                self._sample_counter = max(self._sample_counter, int(parts[1]))
+
     # -- background age -------------------------------------------------------------------
 
     def background_age_minutes(self) -> int | None:
@@ -388,6 +396,20 @@ class CollectController(QObject):
         name = f"Background {self._background_time:%H:%M:%S}"
         self.collect_finished.emit("background", spectrum, name)
         self.status_message.emit(f"Background loaded from {path}")
+
+    def restore_background(self, spectrum: Spectrum, collected: datetime | None) -> None:
+        """Use ``spectrum`` as the background again (reopening a session):
+        no new list entry, and its age counts from when it was collected."""
+        self._background = spectrum
+        self._background_time = local_naive(collected) or local_naive(spectrum.acquired) or datetime.now()
+        self.background_changed.emit()
+
+    def clear_background(self) -> None:
+        if self._background is None:
+            return
+        self._background = None
+        self._background_time = None
+        self.background_changed.emit()
 
     # -- helpers ----------------------------------------------------------------------------
 

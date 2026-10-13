@@ -90,7 +90,7 @@ def main() -> int:
     stage("Preparing workspace…", 0.8)
     from openftir.gui.main_window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(autosave=True)
 
     stage("Ready", 1.0)
     if splash is not None:
@@ -101,6 +101,7 @@ def main() -> int:
     window.show()
     if splash is not None:
         splash.finish(window)
+    window.offer_to_restore_autosave()
     window.updates.check_on_startup()
 
     from openftir.gui.workers import wait_for_workers
