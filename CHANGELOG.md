@@ -3,6 +3,10 @@
 Each release's section here becomes its notes on the Releases page and in the
 app's "Update available" window.
 
+## 0.2.4
+
+- The Export button is bigger and sits right next to + Open, so it's easier to find.
+
 ## 0.2.3
 
 - Sessions: Export → Session file (File → Save Session in Advanced mode) saves everything open in one file: spectra, names, colours, peak picks and the background. Open it later, or on another computer, to carry on where you left off.
