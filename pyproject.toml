@@ -12,6 +12,10 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
+    # HTTPS for the update check: the OS's own certificate store, with
+    # certifi's bundle as a fallback (a packaged app has no other CA list).
+    "truststore>=0.9",
+    "certifi",
 ]
 
 [project.optional-dependencies]

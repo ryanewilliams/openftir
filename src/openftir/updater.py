@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -120,11 +121,36 @@ def _request(url: str, accept: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers={"Accept": accept, "User-Agent": f"OpenFTIR/{__version__}"})
 
 
+def ssl_context() -> ssl.SSLContext:
+    """Certificates to trust for HTTPS.
+
+    A packaged Python has no usable CA list of its own on macOS (and can't
+    count on one on Linux), so verify against the operating system's
+    certificate store, falling back to certifi's bundle.
+    """
+    try:
+        import truststore
+
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:  # noqa: BLE001 - not installed, or no usable OS store
+        pass
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+def _open(request: urllib.request.Request, timeout: float):
+    return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
+
+
 def fetch_latest_release(timeout: float = 15.0) -> Release:
     """The newest published release (GitHub's API needs no login for a
     public repository)."""
     try:
-        with urllib.request.urlopen(_request(LATEST_RELEASE_API, "application/vnd.github+json"), timeout=timeout) as resp:
+        with _open(_request(LATEST_RELEASE_API, "application/vnd.github+json"), timeout) as resp:
             data = json.load(resp)
     except OSError as exc:
         raise UpdateError(f"Couldn't reach GitHub to check for updates ({exc}).") from exc
@@ -162,7 +188,7 @@ def download(
     digest = hashlib.sha256()
     done = 0
     try:
-        with urllib.request.urlopen(_request(asset.url, "application/octet-stream"), timeout=timeout) as resp, open(path, "wb") as out:
+        with _open(_request(asset.url, "application/octet-stream"), timeout) as resp, open(path, "wb") as out:
             total = int(resp.headers.get("Content-Length") or asset.size or 0)
             while True:
                 if cancel is not None and cancel.is_set():

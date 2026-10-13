@@ -129,3 +129,11 @@ def test_batch_swap_script_replaces_the_app(tmp_path):
     assert (old / "_internal" / "version.txt").read_text() == "new"
     assert not (install / "OpenFTIR.old").exists()
     assert not staging.exists()
+
+
+def test_https_uses_a_real_certificate_store():
+    import ssl
+
+    ctx = updater.ssl_context()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED

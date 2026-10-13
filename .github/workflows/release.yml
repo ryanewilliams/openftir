@@ -44,10 +44,14 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            dist/OpenFTIR.app/Contents/MacOS/openftir-cli drivers
+            cli=dist/OpenFTIR.app/Contents/MacOS/openftir-cli
           else
-            dist/OpenFTIR/openftir-cli drivers
+            cli=dist/OpenFTIR/openftir-cli
           fi
+          $cli drivers
+          # HTTPS from inside the packaged app: the update check needs a
+          # certificate store (missing on macOS until 0.2.2).
+          $cli check-update
 
       - uses: actions/upload-artifact@v4
         with:

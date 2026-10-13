@@ -3,6 +3,10 @@
 Each release's section here becomes its notes on the Releases page and in the
 app's "Update available" window.
 
+## 0.2.2
+
+- Mac: Check for Updates works. It failed with a certificate error because the app couldn't find a list of trusted certificates. Mac users on 0.2.0 or 0.2.1 need to download this version by hand once; updates are automatic after that.
+
 ## 0.2.1
 
 - Export PDF reports for several samples at once: Export → PDF reports for all samples…. Tick the samples, fix any names, pick a folder, and they all save together.

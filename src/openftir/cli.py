@@ -106,6 +106,22 @@ def cmd_drivers(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- check-update -------------------------------------------------------------
+
+
+def cmd_check_update(args: argparse.Namespace) -> int:
+    from openftir import __version__, updater
+
+    try:
+        release = updater.fetch_latest_release()
+    except updater.UpdateError as exc:
+        _err(str(exc))
+        return 1
+    status = "update available" if updater.is_newer(release.version) else "up to date"
+    print(f"this version: {__version__}\nlatest release: {release.version} ({status})")
+    return 0
+
+
 # -- info ---------------------------------------------------------------------
 
 
@@ -355,6 +371,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_drivers = sub.add_parser("drivers", help="list available instrument drivers")
     p_drivers.set_defaults(func=cmd_drivers)
+
+    p_update = sub.add_parser("check-update", help="check GitHub for a newer OpenFTIR release")
+    p_update.set_defaults(func=cmd_check_update)
 
     p_info = sub.add_parser("info", help="connect to a driver and print info/diagnostics")
     p_info.add_argument("--driver", required=True)
