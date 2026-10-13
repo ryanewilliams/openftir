@@ -107,5 +107,10 @@ if sys.platform == "darwin":
             "CFBundleDisplayName": "OpenFTIR",
             "CFBundleShortVersionString": "0.1.0",
             "NSHighResolutionCapable": True,
+            # PyInstaller marks the bundle background-only when its last
+            # executable is a console one (openftir-cli). A background-only
+            # app never becomes the active app, so the keyboard never
+            # reaches it: typing anywhere just beeps.
+            "LSBackgroundOnly": False,
         },
     )

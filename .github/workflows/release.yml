@@ -33,6 +33,13 @@ jobs:
       - name: Build
         run: python packaging/build.py --no-venv
 
+      - name: Check the Mac app can take keyboard focus
+        if: runner.os == 'macOS'
+        run: |
+          value=$(/usr/libexec/PlistBuddy -c "Print :LSBackgroundOnly" dist/OpenFTIR.app/Contents/Info.plist 2>/dev/null || echo false)
+          echo "LSBackgroundOnly=$value"
+          test "$value" = "false"
+
       - name: Smoke-test the frozen CLI
         shell: bash
         run: |
