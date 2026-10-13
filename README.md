@@ -2,7 +2,7 @@
 
 Open-source, cross-platform FTIR spectrometer control and spectral analysis software. A clean-room replacement for proprietary Windows-only vendor tools.
 
-**Status**: Early development. Currently targeting Thermo Nicolet Summit; contributions welcome.
+**Status**: Early development. Collects from the Thermo Nicolet Summit X; contributions welcome.
 
 ## Features
 
@@ -22,7 +22,7 @@ Open-source, cross-platform FTIR spectrometer control and spectral analysis soft
 ### Instrument Control
 - **Pluggable driver architecture**: add new spectrometers without UI changes
 - **Simulated instrument** for testing and demos
-- **Nicolet Summit driver**: in progress — see [`docs/instrument-research.md`](docs/instrument-research.md)
+- **Nicolet Summit / Summit X driver**: connects and collects on macOS, Windows and Linux — see [`docs/summit-protocol.md`](docs/summit-protocol.md)
 - Progress reporting and cancellation for long acquisitions
 - Worker-thread isolation (GUI remains responsive)
 
@@ -114,4 +114,8 @@ MIT License — see [`LICENSE`](LICENSE).
 
 ## Acknowledgments
 
-Built by the OpenFTIR community. Inspired by the need for open, cross-platform alternatives to closed vendor tools.
+A spectrometer is only as useful as the software that runs it. Older instruments often depend on programs that only run on Windows XP, live on one ageing PC, or vanished when the vendor moved on. Newer ones can be just as stuck: tied to one operating system, one licence, or the one laptop the software happens to tolerate. A lot of perfectly good hardware ends up unused because of that.
+
+OpenFTIR is an attempt to fix it: open, documented drivers and one app that runs on whatever computer you have, so an instrument keeps working long after its original software stops.
+
+Thanks to everyone who tests it on real instruments and reports what breaks.
