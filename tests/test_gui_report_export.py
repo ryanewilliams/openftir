@@ -129,3 +129,77 @@ def test_export_report_rejects_single_beam_spectrum(qtbot, monkeypatch):
 
     window._on_export_pdf_report()
     assert len(calls) == 1
+
+
+# -- exporting several reports at once ------------------------------------------------
+
+
+def _bulk_window(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    for name in ("Aspirin", "Caffeine", "Unknown 3"):
+        window.model.add(_make_spectrum(name), name=name)
+    background = Spectrum(
+        x=np.linspace(4000, 600, 500), y=np.ones(500), x_unit=XUnit.WAVENUMBER, y_unit=YUnit.SINGLE_BEAM
+    )
+    window.model.add(background, name="Background", visible=False)
+    return window
+
+
+def _run_bulk_dialog(monkeypatch, tmp_path, edit=None, untick=()):
+    from PySide6.QtCore import Qt
+
+    from openftir.gui.dialogs.bulk_report_dialog import BulkReportDialog
+
+    seen = {}
+
+    def fake_exec(self):
+        seen["names"] = [self.table.item(i, 0).text() for i in range(self.table.rowCount())]
+        for i, new_name in (edit or {}).items():
+            self.table.item(i, 0).setText(new_name)
+        for i in untick:
+            self.table.item(i, 0).setCheckState(Qt.Unchecked)
+        self.folder_edit.setText(str(tmp_path))
+        return True
+
+    monkeypatch.setattr(BulkReportDialog, "exec", fake_exec)
+    return seen
+
+
+def test_bulk_export_writes_one_report_per_ticked_sample(qtbot, tmp_path, monkeypatch):
+    window = _bulk_window(qtbot)
+    seen = _run_bulk_dialog(monkeypatch, tmp_path, edit={2: "Ibuprofen"}, untick=(1,))
+
+    window._on_export_pdf_reports()
+
+    # Backgrounds can't have a report, so they aren't offered.
+    assert seen["names"] == ["Aspirin", "Caffeine", "Unknown 3"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["Aspirin report.pdf", "Ibuprofen report.pdf"]
+    # A name typed in the dialog renames the spectrum in the app too.
+    assert [e.name for e in window.model.entries()][:3] == ["Aspirin", "Caffeine", "Ibuprofen"]
+
+
+def test_bulk_export_keeps_samples_with_the_same_name_apart(qtbot, tmp_path, monkeypatch):
+    window = _bulk_window(qtbot)
+    _run_bulk_dialog(monkeypatch, tmp_path, edit={1: "Aspirin", 2: "Aspirin"})
+
+    window._on_export_pdf_reports()
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "Aspirin report (2).pdf",
+        "Aspirin report (3).pdf",
+        "Aspirin report.pdf",
+    ]
+
+
+def test_bulk_export_entry_in_the_simple_export_menu(qtbot, monkeypatch):
+    window = _bulk_window(qtbot)
+    called = []
+    monkeypatch.setattr(window, "_on_export_pdf_reports", lambda: called.append(True))
+    window.simple_bottom_bar.export_all_pdf_requested.disconnect()
+    window.simple_bottom_bar.export_all_pdf_requested.connect(window._on_export_pdf_reports)
+
+    menu = window.simple_bottom_bar.export_btn.menu()
+    action = next(a for a in menu.actions() if "all samples" in a.text())
+    action.trigger()
+    assert called

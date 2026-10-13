@@ -22,6 +22,7 @@ from PySide6.QtCore import QRect, QSettings, QSize, Qt
 from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QColorDialog,
     QDockWidget,
     QHBoxLayout,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QStackedWidget,
     QToolBar,
@@ -42,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from openftir import __version__, processing, report
+from openftir.gui.dialogs.bulk_report_dialog import BulkReportDialog, BulkReportItem
 from openftir.gui.updates import UpdateController
 from openftir.spectrum import Spectrum, XUnit, YUnit
 from openftir.gui import file_dialogs
@@ -399,6 +402,7 @@ class MainWindow(QMainWindow):
         self.simple_bottom_bar.delete_requested.connect(self._delete_row)
         self.simple_bottom_bar.open_requested.connect(self._on_open)
         self.simple_bottom_bar.export_pdf_requested.connect(self._on_export_pdf_report)
+        self.simple_bottom_bar.export_all_pdf_requested.connect(self._on_export_pdf_reports)
         self.simple_bottom_bar.export_data_requested.connect(self._on_save_selected)
 
         self.simple_settings_strip = SimpleSettingsStrip(self.collect_controller, self.simple_top_bar, self)
@@ -549,6 +553,9 @@ class MainWindow(QMainWindow):
         export_report_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
         export_report_action.triggered.connect(self._on_export_pdf_report)
         file_menu.addAction(export_report_action)
+        export_reports_action = QAction("Export PDF Reports for &All Samples...", self)
+        export_reports_action.triggered.connect(self._on_export_pdf_reports)
+        file_menu.addAction(export_reports_action)
 
         file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
@@ -1120,16 +1127,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        info: dict = {}
-        bg_time = self.collect_controller.background_time
-        if bg_time is not None:
-            info["background_time"] = bg_time
-        driver_id = spectrum.meta.get("driver") or self.collect_controller.driver_id
-        if driver_id:
-            display_name = self.collect_controller.driver_display_names().get(driver_id)
-            if display_name:
-                info["driver_display_name"] = display_name
-
+        info = self._report_info(spectrum)
         try:
             report.export_report_pdf(
                 path,
@@ -1144,6 +1142,118 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Export PDF Report", f"Could not export report:\n{exc}")
             return
         self.statusBar().showMessage(f"Report saved to {path}")
+
+    def _report_info(self, spectrum: Spectrum) -> dict:
+        """Header details for a PDF report that only the app knows."""
+        info: dict = {}
+        bg_time = self.collect_controller.background_time
+        if bg_time is not None:
+            info["background_time"] = bg_time
+        driver_id = spectrum.meta.get("driver") or self.collect_controller.driver_id
+        if driver_id:
+            display_name = self.collect_controller.driver_display_names().get(driver_id)
+            if display_name:
+                info["driver_display_name"] = display_name
+        return info
+
+    def _on_export_pdf_reports(self) -> None:
+        """Export PDF reports for several spectra in one go (see BulkReportDialog)."""
+        items = [
+            BulkReportItem(row, entry.name, entry.spectrum.acquired)
+            for row, entry in enumerate(self.model.entries())
+            if entry.spectrum.y_unit in (YUnit.TRANSMITTANCE, YUnit.REFLECTANCE, YUnit.ABSORBANCE)
+        ]
+        if not items:
+            QMessageBox.information(
+                self, "Export PDF Reports", "There are no %Transmittance, %Reflectance or Absorbance spectra to export."
+            )
+            return
+        dialog = BulkReportDialog(items, self)
+        if not dialog.exec():
+            return
+        chosen, folder, paper = dialog.selected(), Path(dialog.folder()), dialog.paper()
+
+        # Names typed in the dialog rename the spectra too, so the app agrees.
+        for item in chosen:
+            if item.name != self.model.entry_at(item.row).name:
+                self.model.setData(self.model.index(item.row), item.name, Qt.EditRole)
+
+        paths = []
+        taken: set[Path] = set()
+        for item in chosen:
+            base = file_dialogs.sanitize_filename(item.name) + " report"
+            path = folder / f"{base}.pdf"
+            n = 2
+            while path in taken:  # two samples with the same name
+                path = folder / f"{base} ({n}).pdf"
+                n += 1
+            taken.add(path)
+            paths.append(path)
+
+        existing = [p for p in paths if p.exists()]
+        if existing:
+            box = QMessageBox(self)
+            box.setWindowTitle("Export PDF Reports")
+            box.setIcon(QMessageBox.Question)
+            box.setText(
+                f"{len(existing)} of these reports already exist in {folder}."
+                if len(existing) > 1 else f"{existing[0].name} already exists in {folder}."
+            )
+            replace = box.addButton("Replace", QMessageBox.AcceptRole)
+            keep = box.addButton("Keep both", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is keep:
+                paths = [self._unused_path(p, taken) for p in paths]
+            elif box.clickedButton() is not replace:
+                return
+
+        progress = QProgressDialog("Exporting reports…", "Cancel", 0, len(chosen), self)
+        progress.setWindowTitle("Export PDF Reports")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(400)
+        params = self._peak_label_params()
+        failures = []
+        done = 0
+        for i, (item, path) in enumerate(zip(chosen, paths)):
+            progress.setValue(i)
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                break
+            entry = self.model.entry_at(item.row)
+            try:
+                report.export_report_pdf(
+                    str(path),
+                    entry.spectrum,
+                    title=item.name,
+                    manual_peaks=list(entry.manual_peaks),
+                    auto_peak_params=params,
+                    paper=paper,
+                    info=self._report_info(entry.spectrum),
+                )
+                done += 1
+            except Exception as exc:  # noqa: BLE001 - keep going, report at the end
+                failures.append(f"{item.name}: {exc}")
+        progress.setValue(len(chosen))
+
+        if failures:
+            QMessageBox.warning(
+                self, "Export PDF Reports",
+                f"Saved {done} report(s) to {folder}.\n\nThese failed:\n" + "\n".join(failures),
+            )
+        self.statusBar().showMessage(f"Saved {done} report{'s' if done != 1 else ''} to {folder}")
+
+    @staticmethod
+    def _unused_path(path: Path, taken: set[Path]) -> Path:
+        if not path.exists():
+            return path
+        n = 2
+        while True:
+            candidate = path.with_name(f"{path.stem} ({n}){path.suffix}")
+            if not candidate.exists() and candidate not in taken:
+                taken.add(candidate)
+                return candidate
+            n += 1
 
     def _add_recent_file(self, path: str) -> None:
         recent = self.settings.value("recentFiles", [], type=list)

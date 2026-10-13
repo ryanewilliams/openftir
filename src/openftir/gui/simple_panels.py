@@ -496,8 +496,8 @@ class SimpleSettingsStrip(QWidget):
 
 class SpectrumChip(QFrame):
     """One spectrum in the bottom bar: colour dot + name, click to
-    select/highlight, an eye button to toggle visibility, right-click for
-    Rename/Change colour/Save as/Delete."""
+    select/highlight, double-click to rename, an eye button to toggle
+    visibility, right-click for Rename/Change colour/Save as/Delete."""
 
     clicked = Signal(int)
     visibility_toggled = Signal(int)
@@ -562,6 +562,11 @@ class SpectrumChip(QFrame):
             self.clicked.emit(self.row)
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.LeftButton:
+            self.rename_requested.emit(self.row)
+        super().mouseDoubleClickEvent(event)
+
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt override
         menu = QMenu(self)
         menu.addAction("Rename", lambda: self.rename_requested.emit(self.row))
@@ -607,6 +612,7 @@ class SimpleBottomBar(QWidget):
     #: existing save-to-disk flow) -- see MainWindow._on_export_pdf_report /
     #: _on_save_selected.
     export_pdf_requested = Signal()
+    export_all_pdf_requested = Signal()
     export_data_requested = Signal()
 
     def __init__(self, model: SpectrumListModel, controller: CollectController, parent=None):
@@ -660,6 +666,9 @@ class SimpleBottomBar(QWidget):
         pdf_action = QAction("PDF report…", self.export_btn)
         pdf_action.triggered.connect(self.export_pdf_requested.emit)
         export_menu.addAction(pdf_action)
+        all_pdf_action = QAction("PDF reports for all samples…", self.export_btn)
+        all_pdf_action.triggered.connect(self.export_all_pdf_requested.emit)
+        export_menu.addAction(all_pdf_action)
         data_action = QAction("Data file…", self.export_btn)
         data_action.triggered.connect(self.export_data_requested.emit)
         export_menu.addAction(data_action)
