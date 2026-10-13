@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openftir"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Open-source, cross-platform FTIR spectrometer control and spectral analysis"
 readme = "README.md"
 license = "MIT"
@@ -33,6 +33,9 @@ openftir = "openftir.cli:main"
 
 [project.gui-scripts]
 openftir-gui = "openftir.gui.app:main"
+
+[tool.hatch.version]
+path = "src/openftir/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openftir"]

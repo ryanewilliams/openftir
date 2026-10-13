@@ -18,6 +18,8 @@ import sys
 
 from PyInstaller.utils.hooks import collect_dynamic_libs, collect_data_files, collect_submodules
 
+from openftir import __version__
+
 HERE = SPECPATH  # noqa: F821 - injected by PyInstaller
 # Drivers are imported lazily by name from the registry, so PyInstaller's
 # import scanner cannot see them; bundle every openftir submodule explicitly.
@@ -105,7 +107,7 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleName": "OpenFTIR",
             "CFBundleDisplayName": "OpenFTIR",
-            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleShortVersionString": __version__,
             "NSHighResolutionCapable": True,
             # PyInstaller marks the bundle background-only when its last
             # executable is a console one (openftir-cli). A background-only

@@ -1,9 +1,10 @@
 name: Build Windows 7 app
 
-# Separate from "Build apps": a Python 3.8 / Qt 5 build for Windows 7 PCs.
-# Run it manually from the Actions tab.
+# A Python 3.8 / Qt 5 build for Windows 7 PCs. Run it manually from the
+# Actions tab; "Build apps" also runs it for every tagged release.
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   build:

@@ -52,8 +52,17 @@ openftir-gui
 openftir --help
 ```
 
-### Prebuilt binaries
-Download the latest standalone application for your OS from the repository's GitHub Releases page, or from the artifacts of the latest "Build apps" run in the Actions tab.
+### Prebuilt apps
+Download the latest version for your computer from the [Releases page](https://github.com/ryanewilliams/openftir/releases/latest):
+
+| Computer | Download |
+|---|---|
+| Windows 10/11 | `OpenFTIR-windows.zip` |
+| Windows 7 | `OpenFTIR-win7-32bit.zip` (any Windows 7 PC) or `OpenFTIR-win7-64bit.zip` |
+| Mac (Apple silicon) | `OpenFTIR-macos.zip` |
+| Linux | `OpenFTIR-linux.tar.gz` |
+
+Nothing needs installing: unzip and run. The apps aren't code-signed, so Windows and macOS warn the first time (Windows: *More info → Run anyway*; macOS: *System Settings → Privacy & Security → Open Anyway*). After that, OpenFTIR updates itself: it checks for a new version on startup, or use *Help → Check for Updates…*.
 
 ### Building a standalone app yourself
 On the OS you want to build for (PyInstaller cannot cross-compile), with Python 3.10+ installed:

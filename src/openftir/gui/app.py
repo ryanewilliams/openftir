@@ -101,6 +101,7 @@ def main() -> int:
     window.show()
     if splash is not None:
         splash.finish(window)
+    window.updates.check_on_startup()
 
     from openftir.gui.workers import wait_for_workers
 

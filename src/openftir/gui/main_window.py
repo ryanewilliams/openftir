@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from openftir import __version__, processing, report
+from openftir.gui.updates import UpdateController
 from openftir.spectrum import Spectrum, XUnit, YUnit
 from openftir.gui import file_dialogs
 from openftir.gui.collect_controller import CollectController
@@ -654,6 +655,22 @@ class MainWindow(QMainWindow):
         probe_action = QAction("Probe Instrument Connection...", self)
         probe_action.triggered.connect(self._on_probe_instrument)
         help_menu.addAction(probe_action)
+
+        help_menu.addSeparator()
+
+        self.updates = UpdateController(
+            self,
+            is_busy=lambda: self.collect_controller.busy,
+            has_open_spectra=lambda: self.model.rowCount() > 0,
+        )
+        check_updates_action = QAction("Check for Updates...", self)
+        check_updates_action.triggered.connect(lambda: self.updates.check(manual=True))
+        help_menu.addAction(check_updates_action)
+        auto_update_action = QAction("Check for Updates on Startup", self)
+        auto_update_action.setCheckable(True)
+        auto_update_action.setChecked(UpdateController.auto_check_enabled())
+        auto_update_action.toggled.connect(UpdateController.set_auto_check_enabled)
+        help_menu.addAction(auto_update_action)
 
         help_menu.addSeparator()
 
