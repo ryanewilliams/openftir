@@ -598,8 +598,12 @@ class BackgroundChip(QFrame):
         self._label.setStyleSheet("color: #c0392b; font-weight: 600;" if stale else "color: #666666;")
 
 
+#: height of the bottom bar's "+ Open" and "Export" buttons
+_ACTION_HEIGHT = 30
+
+
 class SimpleBottomBar(QWidget):
-    """Spectrum chips (+ the background chip and a '+ Open' chip) and Export."""
+    """Spectrum chips (+ the background chip), then '+ Open' and Export."""
 
     select_row_requested = Signal(int)
     visibility_toggle_requested = Signal(int)
@@ -635,6 +639,7 @@ class SimpleBottomBar(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setFixedHeight(46)
+        self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setAutoFillBackground(True)
         self.scroll.viewport().setAutoFillBackground(True)
@@ -652,17 +657,27 @@ class SimpleBottomBar(QWidget):
         self._open_chip = QPushButton("+ Open")
         self._open_chip.setFlat(True)
         self._open_chip.setCursor(Qt.PointingHandCursor)
+        self._open_chip.setFixedHeight(_ACTION_HEIGHT)
         self._open_chip.setStyleSheet(
-            "QPushButton { border: 1px dashed #bbbbbb; border-radius: 13px; padding: 3px 12px; color: #555555; }"
+            "QPushButton { border: 1px dashed #bbbbbb; border-radius: 15px; padding: 0 14px; color: #555555; }"
         )
         self._open_chip.clicked.connect(self.open_requested.emit)
 
-        # A small dropdown rather than a plain button: "PDF report..." is
-        # listed first (the common case for a finished sample), "Data
-        # file..." is the original save-to-disk behaviour.
+        # A dropdown rather than a plain button: "PDF report..." is listed
+        # first (the common case for a finished sample). It sits right next
+        # to "+ Open", outlined in blue so it reads as the way out.
         self.export_btn = QToolButton(self)
-        self.export_btn.setText("Export")
+        self.export_btn.setText("Export  ▾")
         self.export_btn.setPopupMode(QToolButton.InstantPopup)
+        self.export_btn.setCursor(Qt.PointingHandCursor)
+        self.export_btn.setFixedHeight(_ACTION_HEIGHT)
+        self.export_btn.setStyleSheet(
+            "QToolButton { border: 1px solid #2a82da; border-radius: 15px; padding: 0 16px;"
+            " color: #1f6fbf; font-weight: 600; background: #ffffff; }"
+            "QToolButton:hover { background: #eef5fd; }"
+            "QToolButton:pressed { background: #dcebfb; }"
+            "QToolButton::menu-indicator { image: none; width: 0; }"
+        )
         export_menu = QMenu(self.export_btn)
         pdf_action = QAction("PDF report…", self.export_btn)
         pdf_action.triggered.connect(self.export_pdf_requested.emit)
@@ -678,7 +693,11 @@ class SimpleBottomBar(QWidget):
         session_action.triggered.connect(self.export_session_requested.emit)
         export_menu.addAction(session_action)
         self.export_btn.setMenu(export_menu)
+        # The chips scroll; Open and Export stay pinned just after them, and
+        # the spare width goes to the stretch on the right.
+        outer.addWidget(self._open_chip, 0)
         outer.addWidget(self.export_btn, 0)
+        outer.addStretch(0)  # only takes what the chips (capped in rebuild) leave
 
         self._age_timer = QTimer(self)
         self._age_timer.setInterval(60_000)
@@ -708,7 +727,7 @@ class SimpleBottomBar(QWidget):
         while self._chip_layout.count():
             item = self._chip_layout.takeAt(0)
             widget = item.widget()
-            if widget is not None and widget is not self.background_chip and widget is not self._open_chip:
+            if widget is not None and widget is not self.background_chip:
                 # hide() immediately -- deleteLater() alone leaves the old
                 # chip paintable (and visible in a grab()) until the next
                 # event loop pass actually destroys it.
@@ -730,8 +749,14 @@ class SimpleBottomBar(QWidget):
             chip.set_selected(row == self._highlighted_row)
             self._chip_layout.addWidget(chip)
             self._chips.append(chip)
-        self._chip_layout.addWidget(self._open_chip)
-        self._chip_layout.addStretch(1)
+        # As wide as the chips need, so Open/Export sit right after them;
+        # once the chips outgrow the bar it scrolls instead.
+        self._fit_chip_area()
+        QTimer.singleShot(0, self._fit_chip_area)  # once the new chips are laid out
+
+    def _fit_chip_area(self) -> None:
+        self._chip_layout.invalidate()
+        self.scroll.setMaximumWidth(self._chip_layout.sizeHint().width() + 2)
 
     def set_highlighted_row(self, row: int | None) -> None:
         self._highlighted_row = row

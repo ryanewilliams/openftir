@@ -299,3 +299,31 @@ def test_background_button_shows_background_on_empty_plot(qtbot):
     qtbot.waitUntil(lambda: controller.background is not None and not controller.busy, timeout=15000)
     assert window.plot.has_live_preview()
     assert "Place your sample" in window.statusBar().currentMessage()
+
+
+def test_export_sits_next_to_open_and_stays_visible_with_many_samples(qtbot):
+    import numpy as np
+
+    from openftir.spectrum import Spectrum, YUnit
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1366, 728)
+    window.show()
+    bar = window.simple_bottom_bar
+    x = np.linspace(4000, 600, 200)
+
+    def add(n):
+        for i in range(n):
+            window.model.add(Spectrum(x=x, y=np.full_like(x, 90.0), y_unit=YUnit.TRANSMITTANCE), name=f"S{i}")
+        qtbot.wait(50)
+
+    add(2)
+    open_btn, export = bar._open_chip.geometry(), bar.export_btn.geometry()
+    assert 0 < export.left() - open_btn.right() < 20  # side by side
+    assert export.right() < bar.width() / 2  # right after the chips, not off at the far edge
+
+    add(20)
+    export = bar.export_btn.geometry()
+    assert export.right() <= bar.width()  # chips scroll; Export stays on screen
+    assert bar.export_btn.isVisible()
