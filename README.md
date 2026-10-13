@@ -122,8 +122,4 @@ MIT License — see [`LICENSE`](LICENSE).
 
 ## Acknowledgments
 
-A spectrometer is only as useful as the software that runs it. Older instruments often depend on programs that only run on Windows XP, live on one ageing PC, or vanished when the vendor moved on. Newer ones can be just as stuck: tied to one operating system, one licence, or the one laptop the software happens to tolerate. A lot of perfectly good hardware ends up unused because of that.
-
-OpenFTIR is an attempt to fix it: open, documented drivers and one app that runs on whatever computer you have, so an instrument keeps working long after its original software stops.
-
-Thanks to everyone who tests it on real instruments and reports what breaks.
+A lot of older (and sometimes newer) lab hardware depends on esoteric or hard-to-find software. We want to try to fix that.
