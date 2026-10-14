@@ -10,3 +10,9 @@ dist/
 *.cab
 *.exe
 .build-venv/
+
+# Instrument firmware and USB captures are vendor code / private lab data:
+# never commit them (see docs/instrument-research.md).
+*.pcap
+*.pcapng
+*firmware*.hex
