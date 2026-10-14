@@ -20,7 +20,7 @@ from typing import Union
 
 from openftir.spectrum import Spectrum
 
-from . import _csv, _jcamp, _ofjson, _spa
+from . import _bsp, _csv, _jcamp, _ofjson, _spa
 from .errors import FormatError
 
 __all__ = ["load", "save", "SUPPORTED_READ", "SUPPORTED_WRITE", "FormatError"]
@@ -28,6 +28,7 @@ __all__ = ["load", "save", "SUPPORTED_READ", "SUPPORTED_WRITE", "FormatError"]
 SUPPORTED_READ: dict[str, str] = {
     ".spa": "Thermo OMNIC single spectrum (SPA)",
     ".spg": "Thermo OMNIC spectra group (SPG)",
+    ".bsp": "Varian Resolutions Pro spectra (BSP)",
     ".jdx": "JCAMP-DX spectrum",
     ".dx": "JCAMP-DX spectrum",
     ".csv": "Comma/tab/semicolon separated values",
@@ -46,6 +47,7 @@ SUPPORTED_WRITE: dict[str, str] = {
 _READERS = {
     ".spa": lambda p: [_spa.read_spa(p)],
     ".spg": _spa.read_spg,
+    ".bsp": _bsp.read_bsp,
     ".jdx": _jcamp.read_jcamp,
     ".dx": _jcamp.read_jcamp,
     ".csv": _csv.read_csv,

@@ -1078,15 +1078,20 @@ class MainWindow(QMainWindow):
                 errors.append(f"{path}: {exc}")
                 continue
             stem = Path(path).stem
+            # A file holding a background and the sample measured against it
+            # (e.g. a Resolutions Pro .bsp): add the background hidden, as for
+            # backgrounds collected in the app, so units aren't mixed on screen.
+            has_processed = any(s.y_unit != YUnit.SINGLE_BEAM for s in spectra)
             for i, spectrum in enumerate(spectra):
                 # Single-spectrum files are named after the file (OMNIC titles are
                 # often just a timestamp); groups use each spectrum's own title.
                 name = stem if len(spectra) == 1 else (spectrum.title or f"{stem} [{i + 1}]")
+                visible = not (has_processed and spectrum.y_unit == YUnit.SINGLE_BEAM)
                 # Restore manual peaks a .ofjson save mirrored into meta
                 # (see SpectrumListModel.add); any other format just has
                 # no such key, so manual_peaks comes back empty.
                 manual_peaks = [float(p) for p in spectrum.meta.get("manual_peaks", []) or []]
-                self.model.add(spectrum, name=name, manual_peaks=manual_peaks)
+                self.model.add(spectrum, name=name, visible=visible, manual_peaks=manual_peaks)
                 loaded_any = True
             if spectra:
                 self._add_recent_file(path)
@@ -1189,7 +1194,9 @@ class MainWindow(QMainWindow):
         bg_time = self.collect_controller.background_time
         if bg_time is not None:
             info["background_time"] = bg_time
-        driver_id = spectrum.meta.get("driver") or self.collect_controller.driver_id
+        # Only the instrument that actually collected this spectrum: an opened
+        # file must not be labelled with whatever instrument is selected now.
+        driver_id = spectrum.meta.get("driver")
         if driver_id:
             display_name = self.collect_controller.driver_display_names().get(driver_id)
             if display_name:

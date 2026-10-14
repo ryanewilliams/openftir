@@ -196,3 +196,12 @@ def test_every_table_peak_gets_a_plot_label_clear_of_the_trace():
     for text in labels.values():
         box = text.get_window_extent()
         assert not curve.hits(box.x0, fig_h - box.y1, box.x1, fig_h - box.y0), text.get_text()
+
+
+def test_report_names_the_instrument_from_the_file_not_the_app():
+    from openftir.report import pdf
+
+    x = np.linspace(4000, 1200, 100)
+    s = Spectrum(x=x, y=np.full(100, 90.0), x_unit=XUnit.WAVENUMBER, y_unit=YUnit.TRANSMITTANCE,
+                 title="Limonene", meta={"instrument": "Varian (Resolutions Pro)"})
+    assert pdf._resolve_fields(s, None, {})["instrument"] == "Varian (Resolutions Pro)"

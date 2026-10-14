@@ -16,6 +16,7 @@ dependencies = [
     # certifi's bundle as a fallback (a packaged app has no other CA list).
     "truststore>=0.9",
     "certifi",
+    "olefile>=0.46",  # Varian Resolutions Pro .bsp files are OLE2 documents
 ]
 
 [project.optional-dependencies]

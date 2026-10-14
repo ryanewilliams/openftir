@@ -170,6 +170,8 @@ def _resolve_fields(spectrum: Spectrum, title: str | None, info: dict | None) ->
         instrument = "Nicolet Summit X (ATR)"
     elif info.get("driver_display_name"):
         instrument = str(info["driver_display_name"])
+    elif meta.get("instrument"):
+        instrument = str(meta["instrument"])
     elif driver:
         instrument = str(driver).capitalize()
     else:
@@ -188,7 +190,7 @@ def _resolve_fields(spectrum: Spectrum, title: str | None, info: dict | None) ->
     if resolution_cm is not None:
         res_text = f"{resolution_cm:g} cm⁻¹"
         if scans:
-            res_text += f", {int(scans)} scans"
+            res_text += f", {int(scans)} scan{'' if int(scans) == 1 else 's'}"
     else:
         res_text = "—"
 

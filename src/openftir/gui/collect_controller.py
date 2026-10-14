@@ -305,10 +305,12 @@ class CollectController(QObject):
     def _on_collect_succeeded(self, spectrum: Spectrum) -> None:
         self._busy = False
         mode = self._pending_mode
-        if spectrum.acquired is None:
-            # Drivers don't timestamp their data; stamp it here so the saved
-            # file and the PDF report's Date show when it was collected.
-            spectrum = spectrum.copy(acquired=datetime.now())
+        # Drivers don't timestamp or label their data; record when and with
+        # which instrument it was collected (the PDF report shows both).
+        spectrum = spectrum.copy(
+            acquired=spectrum.acquired or datetime.now(),
+            meta={**spectrum.meta, "driver": spectrum.meta.get("driver") or self.driver_id},
+        )
         label = "Background (single beam)" if mode == "background" else "Sample (single beam)"
         self.preview_ready.emit(spectrum, label)
 

@@ -64,3 +64,23 @@ def test_save_selected_round_trips(qtbot, tmp_path):
     loaded = io.load(str(out_path))
     assert len(loaded) == 1
     assert np.allclose(loaded[0].x, entry.spectrum.x)
+
+
+def test_background_in_a_multi_spectrum_file_opens_hidden(qtbot, tmp_path, monkeypatch):
+    # e.g. a Resolutions Pro .bsp holding the background and the sample.
+    import numpy as np
+
+    from openftir import io as io_mod
+    from openftir.gui.main_window import MainWindow
+    from openftir.spectrum import Spectrum, YUnit
+
+    x = np.linspace(4000, 1200, 50)
+    background = Spectrum(x=x, y=np.ones(50), y_unit=YUnit.SINGLE_BEAM, title="run - background")
+    sample = Spectrum(x=x, y=np.full(50, 90.0), y_unit=YUnit.TRANSMITTANCE, title="run - sample")
+    monkeypatch.setattr(io_mod, "load", lambda path: [background, sample])
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._open_paths([str(tmp_path / "run.bsp")])
+    entries = window.model.entries()
+    assert [e.name for e in entries] == ["run - background", "run - sample"]
+    assert [e.visible for e in entries] == [False, True]
