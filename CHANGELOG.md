@@ -3,7 +3,7 @@
 Each release's section here becomes its notes on the Releases page and in the
 app's "Update available" window.
 
-## Unreleased
+## 0.3.0
 
 - New: the Varian 3100 FT-IR (Excalibur series) can be run from OpenFTIR. Pick "Varian 3100 FT-IR" and connect. The first time, OpenFTIR asks for the Varian firmware file (OpenFTIR can't include it; keep your lab's copy safe). After the bench is switched on, the first connection takes about 3 minutes while OpenFTIR aligns it, like Resolutions Pro does.
 - Open Varian Resolutions Pro `.bsp` files.
