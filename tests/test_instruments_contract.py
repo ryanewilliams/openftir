@@ -58,6 +58,11 @@ def _check_info(factory: InstrumentFactory) -> None:
         instrument.disconnect()
 
 
+def _resolution(info: InstrumentInfo, preferred: float) -> float:
+    """``preferred`` if the driver offers it, else its first advertised resolution."""
+    return preferred if preferred in info.resolutions else info.resolutions[0]
+
+
 def _check_diagnostics(factory: InstrumentFactory) -> None:
     instrument = factory()
     instrument.connect()
@@ -71,9 +76,9 @@ def _check_diagnostics(factory: InstrumentFactory) -> None:
 
 def _check_collect_single_beam(factory: InstrumentFactory) -> None:
     instrument = factory()
-    instrument.connect()
+    info = instrument.connect()
     try:
-        params = CollectParams(scans=2, resolution=16.0, x_min=450.0, x_max=3800.0)
+        params = CollectParams(scans=2, resolution=_resolution(info, 16.0), x_min=450.0, x_max=3800.0)
         spec = instrument.collect_single_beam(params)
         assert spec.y_unit == YUnit.SINGLE_BEAM
         assert spec.x_unit == XUnit.WAVENUMBER
@@ -87,10 +92,10 @@ def _check_collect_single_beam(factory: InstrumentFactory) -> None:
 
 def _check_progress(factory: InstrumentFactory) -> None:
     instrument = factory()
-    instrument.connect()
+    info = instrument.connect()
     try:
         calls: list[tuple[int, int]] = []
-        params = CollectParams(scans=5, resolution=16.0)
+        params = CollectParams(scans=5, resolution=_resolution(info, 16.0))
         instrument.collect_single_beam(params, progress=lambda done, total: calls.append((done, total)))
         assert len(calls) == params.scans
         assert calls[-1] == (params.scans, params.scans)
@@ -101,11 +106,11 @@ def _check_progress(factory: InstrumentFactory) -> None:
 
 def _check_cancel(factory: InstrumentFactory) -> None:
     instrument = factory()
-    instrument.connect()
+    info = instrument.connect()
     try:
         cancel = threading.Event()
         cancel.set()
-        params = CollectParams(scans=10, resolution=16.0)
+        params = CollectParams(scans=10, resolution=_resolution(info, 16.0))
         with pytest.raises(CollectionCancelled):
             instrument.collect_single_beam(params, cancel=cancel)
     finally:
@@ -114,10 +119,10 @@ def _check_cancel(factory: InstrumentFactory) -> None:
 
 def _check_noise_falls_with_scans(factory: InstrumentFactory) -> None:
     instrument = factory()
-    instrument.connect()
+    info = instrument.connect()
     try:
-        params_low = CollectParams(scans=2, resolution=8.0)
-        params_high = CollectParams(scans=32, resolution=8.0)
+        params_low = CollectParams(scans=2, resolution=_resolution(info, 8.0))
+        params_high = CollectParams(scans=32, resolution=_resolution(info, 8.0))
 
         # Two independent collections with identical params should agree
         # almost exactly except for detector noise; differencing them cancels

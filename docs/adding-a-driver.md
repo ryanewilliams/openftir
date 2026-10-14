@@ -13,6 +13,14 @@ Read `src/openftir/instruments/base.py`. Key classes and types:
 - **`Instrument`**: Abstract base class your driver inherits from
   - `driver_id`: Short, unique identifier (e.g., `"simulated"`, `"summit"`)
   - `display_name`: User-facing name (e.g., `"Simulated Instrument"`)
+  - `default_apodization` (optional): the apodization the app starts with for this
+    driver, e.g. to match the vendor software (`"norton-beer-medium"` for the Varian)
+  - `required_files` (optional): files the user must supply, as
+    `{constructor_keyword: (description, file_dialog_filter)}`. The app asks for each
+    once, remembers it, and passes it to the constructor; raise
+    `InstrumentFileError(key, message)` there if it's missing or unusable and the app
+    asks again. The Varian driver uses this for the bench firmware, which OpenFTIR
+    must not ship.
 
 - **`CollectParams`**: Configuration for a measurement
   - `scans`: Number of co-additions

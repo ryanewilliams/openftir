@@ -25,6 +25,7 @@ from .baseline import baseline_als, baseline_polynomial, baseline_rubberband
 from .convert import convert_x, kubelka_munk, ratio, to_absorbance, to_transmittance
 from .fft import (
     apodize,
+    asymmetric_mertz_single_beam,
     interferogram_to_single_beam,
     nominal_resolution_points,
     single_beam_to_interferogram,
@@ -69,6 +70,7 @@ __all__ = [
     "atr_correction",
     # fft
     "apodize",
+    "asymmetric_mertz_single_beam",
     "interferogram_to_single_beam",
     "single_beam_to_interferogram",
     "nominal_resolution_points",

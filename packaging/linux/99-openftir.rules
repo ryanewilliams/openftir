@@ -10,5 +10,8 @@
 # Thermo Fisher Nicolet Summit (confirmed on a Summit X, USB 0ebb:000c)
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="0ebb", ATTRS{idProduct}=="000c", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
+# Varian 3100 FT-IR, Excalibur series (Bio-Rad design, USB 0614:0001)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0614", ATTRS{idProduct}=="0001", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
 # Other instruments: find the VID:PID with `openftir-cli probe` (or `lsusb`)
 # and add a line like the one above (lowercase hex, no 0x prefix).

@@ -375,6 +375,7 @@ class MainWindow(QMainWindow):
         # One instrument/collection state, shared by Advanced mode's Collect
         # dock and Simple mode's top bar -- see collect_controller.py.
         self.collect_controller = CollectController(self)
+        self.collect_controller.file_needed.connect(self._on_driver_file_needed)
 
         plot_container = _PlotAspectContainer(self.plot, self)
         self._central = _CentralArea(plot_container, self.peaks_panel, self.details_panel, self)
@@ -1038,6 +1039,28 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"x = {x:.2f}   y = {y:.4f}")
 
     # -- file menu ------------------------------------------------------------------------
+
+    def _on_driver_file_needed(self, driver_id: str, key: str, description: str, name_filter: str, reason: str) -> None:
+        """A driver needs a file OpenFTIR doesn't ship (the Varian's firmware):
+        explain, let the user pick their copy, remember it and connect again."""
+        name = self.collect_controller.driver_display_names().get(driver_id, driver_id)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Connect")
+        box.setText(f"{name} needs its {description}.")
+        box.setInformativeText(
+            f"{reason}\n\nOpenFTIR doesn't include this file. Choose the copy your lab keeps; "
+            "OpenFTIR remembers it for next time."
+        )
+        choose = box.addButton("Choose File...", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        if box.clickedButton() is not choose:
+            return
+        paths = file_dialogs.get_open_paths(self, f"Choose the {description}", name_filter, multiple=False)
+        if paths:
+            self.collect_controller.set_driver_file(key, paths[0], driver_id)
+            self.collect_controller.connect_instrument()
 
     def _on_open(self) -> None:
         try:

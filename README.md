@@ -2,13 +2,14 @@
 
 Open-source, cross-platform FTIR spectrometer control and spectral analysis software. A clean-room replacement for proprietary Windows-only vendor tools.
 
-**Status**: Early development. Collects from the Thermo Nicolet Summit X; contributions welcome.
+**Status**: Early development. Collects from the Thermo Nicolet Summit X and the Varian 3100 FT-IR; contributions welcome.
 
 ## Features
 
 ### Spectral I/O
 - **OMNIC files**: read/write `.spa` and `.spg` (single-beam and absorbance/transmittance)
 - **JCAMP-DX**: read `.jdx` / `.dx` files
+- **Varian Resolutions Pro**: read `.bsp` files (spectra, background and the raw interferograms)
 - **CSV**: export processed spectra and import custom datasets
 
 ### Processing
@@ -23,6 +24,7 @@ Open-source, cross-platform FTIR spectrometer control and spectral analysis soft
 - **Pluggable driver architecture**: add new spectrometers without UI changes
 - **Simulated instrument** for testing and demos
 - **Nicolet Summit / Summit X driver**: connects and collects on macOS, Windows and Linux — see [`docs/summit-protocol.md`](docs/summit-protocol.md)
+- **Varian 3100 FT-IR (Excalibur series) driver**: needs your lab's copy of the bench firmware file — see [`docs/varian-protocol.md`](docs/varian-protocol.md)
 - Progress reporting and cancellation for long acquisitions
 - Worker-thread isolation (GUI remains responsive)
 

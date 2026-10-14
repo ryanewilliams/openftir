@@ -18,13 +18,14 @@ only ever emits a *suggested* name alongside ``collect_finished``.
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QObject, QSettings, Signal
 
 from openftir.instruments import registry
-from openftir.instruments.base import CollectParams, Instrument, InstrumentInfo
+from openftir.instruments.base import CollectParams, Instrument, InstrumentFileError, InstrumentInfo
 from openftir.processing import ratio
 from openftir.spectrum import local_naive, Spectrum, YUnit
 from openftir.gui.workers import CallWorker, CollectWorker, start_worker
@@ -70,6 +71,9 @@ class CollectController(QObject):
     status_message = Signal(str)
     #: driver id, acquisition settings, or resolutions changed
     settings_changed = Signal()
+    #: the driver needs a file from the user before it can connect:
+    #: driver_id, key, description, file-dialog filter, reason
+    file_needed = Signal(str, str, str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -171,11 +175,17 @@ class CollectController(QObject):
                 except TypeError:
                     instrument = registry.create(driver_id)
             else:
-                instrument = registry.create(driver_id)
+                instrument = registry.create(driver_id, **self._driver_files(driver_id))
+        except InstrumentFileError as exc:
+            self._ask_for_file(driver_id, exc)
+            return
         except Exception as exc:  # noqa: BLE001
             self.error.emit("Connect", f"Could not create driver:\n{exc}")
             return
 
+        if hasattr(instrument, "on_status"):
+            # Progress text from the worker thread (e.g. the Varian's alignment).
+            instrument.on_status = self.status_message.emit
         self._instrument = instrument
         self.status_message.emit("Connecting...")
         worker = CallWorker(self._locked(instrument.connect))
@@ -220,6 +230,33 @@ class CollectController(QObject):
         worker.failed.connect(lambda msg: self.error.emit("Diagnostics", msg))
         start_worker(worker)
 
+    # -- files a driver needs from the user (e.g. the Varian's firmware) --------------
+
+    def _file_key(self, driver_id: str, key: str) -> str:
+        return f"{self._driver_settings_prefix(driver_id)}/file/{key}"
+
+    def driver_file(self, key: str, driver_id: str | None = None) -> str:
+        return self._settings.value(self._file_key(driver_id or self.driver_id, key), "", type=str)
+
+    def set_driver_file(self, key: str, path: str, driver_id: str | None = None) -> None:
+        self._settings.setValue(self._file_key(driver_id or self.driver_id, key), path)
+
+    def _driver_files(self, driver_id: str) -> dict[str, str]:
+        cls = registry.available_drivers().get(driver_id)
+        files = {}
+        for key in getattr(cls, "required_files", {}):
+            path = self.driver_file(key, driver_id)
+            if path and os.path.isfile(path):
+                files[key] = path
+        return files
+
+    def _ask_for_file(self, driver_id: str, exc: InstrumentFileError) -> None:
+        cls = registry.available_drivers().get(driver_id)
+        description, name_filter = getattr(cls, "required_files", {}).get(exc.key, (exc.key, "All files (*)"))
+        # Forget a remembered file that turned out to be unusable.
+        self._settings.remove(self._file_key(driver_id, exc.key))
+        self.file_needed.emit(driver_id, exc.key, description, name_filter, str(exc))
+
     # -- per-driver settings memory ---------------------------------------------------
 
     def _driver_settings_prefix(self, driver_id: str) -> str:
@@ -256,8 +293,8 @@ class CollectController(QObject):
             self.x_max = float(x_max)
 
         apodization = s.value(f"{prefix}/apodization", "")
-        if apodization:
-            self.apodization = apodization
+        cls = registry.available_drivers().get(driver_id)
+        self.apodization = apodization or getattr(cls, "default_apodization", "happ-genzel")
 
         # "format_v2", not "format": see the comment on FORMATS above -- this
         # intentionally ignores any pre-this-change saved value, so a fresh

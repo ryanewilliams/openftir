@@ -212,3 +212,39 @@ def test_remembers_last_used_settings_per_driver(qtbot):
     assert panel2.format_combo.currentText() == "%Transmittance"
 
     settings.remove("collect/simulated")
+
+
+def test_driver_that_needs_a_file_asks_for_it(qtbot, tmp_path, monkeypatch):
+    """The Varian needs its firmware file: connecting without one asks for
+    it (and doesn't try to connect); a chosen file is remembered."""
+    from openftir.gui.collect_controller import CollectController
+    from openftir.instruments.varian.fake import synthetic_firmware
+    from openftir.instruments.varian.protocol import FIRMWARE_ENV
+
+    monkeypatch.delenv(FIRMWARE_ENV, raising=False)
+    controller = CollectController()
+    controller.set_driver("varian")
+    controller._settings.remove("collect/varian/file/firmware")
+    try:
+        assert controller.apodization == "norton-beer-medium"   # the Varian's default
+
+        with qtbot.waitSignal(controller.file_needed, timeout=2000) as blocker:
+            controller.connect_instrument()
+        driver_id, key, description, name_filter, reason = blocker.args
+        assert (driver_id, key) == ("varian", "firmware")
+        assert "firmware" in description and "*.hex" in name_filter
+        assert not controller.connected
+
+        fw = tmp_path / "bench.hex"
+        fw.write_bytes(synthetic_firmware())
+        controller.set_driver_file("firmware", str(fw))
+        assert controller._driver_files("varian") == {"firmware": str(fw)}
+
+        # A file that turns out to be unusable is forgotten and asked for again.
+        fw.write_bytes(b"not firmware" * 200)
+        with qtbot.waitSignal(controller.file_needed, timeout=2000):
+            controller.connect_instrument()
+        assert controller.driver_file("firmware") == ""
+    finally:
+        controller._settings.remove("collect/varian")
+        controller.set_driver("simulated")

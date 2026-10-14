@@ -170,3 +170,32 @@ def test_interferogram_to_single_beam_meta_fields():
     recovered = interferogram_to_single_beam(igram.y, laser_wavenumber=LASER)
     for key in ("resolution_cm", "apodization", "zpd_index", "double_sided", "zero_fill"):
         assert key in recovered.meta
+
+
+def test_asymmetric_mertz_recovers_a_spectrum_with_phase_error():
+    from openftir.processing.fft import asymmetric_mertz_single_beam
+
+    laser = 15800.0
+    n_full, zpd, n = 8192, 516, 4072
+    sigma = np.fft.rfftfreq(n_full, d=1.0 / laser)
+    beam = np.exp(-(((sigma - 2500.0) / 1200.0) ** 2)) * (1 - 0.6 * np.exp(-(((sigma - 1600.0) / 15.0) ** 2)))
+    phase = 0.4 + 2e-4 * sigma   # a smooth instrumental phase
+    ifg = np.fft.fftshift(np.fft.irfft(beam * np.exp(1j * phase), n=n_full))
+    centre = n_full // 2
+    igram = ifg[centre - zpd : centre - zpd + n]   # 516 points before ZPD, the rest after
+
+    sb = asymmetric_mertz_single_beam(igram, zpd, laser, apodization="boxcar", x_min=600, x_max=4000)
+    expected = np.interp(sb.x, sigma, beam)
+    k = np.dot(sb.y, expected) / np.dot(expected, expected)
+    assert np.max(np.abs(sb.y / k - expected)) < 0.03
+    assert sb.meta["fft_size"] == 8192 and sb.y_unit == YUnit.SINGLE_BEAM
+    # the band at 1600 keeps its depth
+    i = np.argmin(abs(sb.x - 1600))
+    assert sb.y[i] / k / np.interp(1600, sigma, beam / (1 - 0.6 * np.exp(-(((sigma - 1600.0) / 15.0) ** 2)))) == pytest.approx(0.4, abs=0.05)
+
+
+def test_asymmetric_mertz_rejects_a_bad_zpd():
+    from openftir.processing.fft import asymmetric_mertz_single_beam
+
+    with pytest.raises(ValueError):
+        asymmetric_mertz_single_beam(np.zeros(100), 98, 15800.0)

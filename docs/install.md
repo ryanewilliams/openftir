@@ -136,6 +136,28 @@ Let me pick* and choose the Thermo Fisher Scientific driver). Paradigm will
 not see the instrument while WinUSB is installed, and OpenFTIR will not see
 it while Thermo's driver is installed.
 
+#### Varian 3100 FT-IR (Excalibur series)
+
+Windows has no built-in driver for the Varian (it shows as "Excalibur
+Spectrometer" only on a PC with Resolutions Pro installed, or as an unknown
+device). Give it WinUSB once:
+
+1. Close Resolutions Pro, and any virtual machine that uses the Varian.
+2. Run [Zadig](https://zadig.akeo.ie/), **Options → List All Devices**, pick
+   the device with USB ID `0614 0001`.
+3. Choose **WinUSB** and click **Replace Driver** (or **Install Driver**).
+   A PC that already runs Resolutions Pro in QEMU this way is already set up.
+4. In OpenFTIR pick the **Varian 3100 FT-IR** driver and connect.
+
+The first time you connect, OpenFTIR asks for the **Varian firmware file**
+(`.hex`). The bench loads it every time it's switched on. OpenFTIR does not
+include it (it's Varian's), so keep your lab's copy somewhere safe, with a
+backup. It's remembered after the first time.
+
+The first connection after switching the bench on takes about 3 minutes:
+OpenFTIR aligns the bench the way Resolutions Pro does after power-on. After
+that, connecting and collecting are quick until the bench is switched off.
+
 #### Other instruments
 
 Only replace a driver with WinUSB (via Zadig as above) if the OpenFTIR driver

@@ -26,6 +26,16 @@ class CollectionCancelled(InstrumentError):
     pass
 
 
+class InstrumentFileError(InstrumentError):
+    """A file the driver needs (see ``Instrument.required_files``) is
+    missing or unusable. ``key`` names which one, so the app can ask the
+    user for it again."""
+
+    def __init__(self, key: str, message: str) -> None:
+        super().__init__(message)
+        self.key = key
+
+
 @dataclass
 class CollectParams:
     scans: int = 16
@@ -67,6 +77,11 @@ class Instrument(abc.ABC):
     driver_id: str = ""
     #: human readable name shown in the UI
     display_name: str = ""
+    #: apodization the app selects for this driver until the user picks one
+    default_apodization: str = "happ-genzel"
+    #: files the user must supply, as constructor keyword -> (what it is,
+    #: file-dialog filter). The app asks for each once and remembers it.
+    required_files: dict[str, tuple[str, str]] = {}
 
     @abc.abstractmethod
     def connect(self) -> InstrumentInfo: ...

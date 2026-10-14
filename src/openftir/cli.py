@@ -160,7 +160,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     from openftir import io as ioapi
 
     instrument = _create_instrument(args.driver, args.driver_opt)
-    params = CollectParams(scans=args.scans, resolution=args.resolution)
+    params = CollectParams(scans=args.scans, resolution=args.resolution, apodization=instrument.default_apodization)
     cancel = threading.Event()
 
     with instrument:

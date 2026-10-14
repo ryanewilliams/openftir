@@ -26,6 +26,7 @@ from openftir.spectrum import Spectrum, XUnit, YUnit
 
 __all__ = [
     "apodize",
+    "asymmetric_mertz_single_beam",
     "interferogram_to_single_beam",
     "single_beam_to_interferogram",
     "nominal_resolution_points",
@@ -238,6 +239,78 @@ def interferogram_to_single_beam(
         y_unit=YUnit.SINGLE_BEAM,
         meta=meta,
         history=[f"interferogram -> single beam (apodization={apodization}, phase={phase_correction})"],
+    )
+
+
+def asymmetric_mertz_single_beam(
+    igram: np.ndarray,
+    zpd: int,
+    laser_wavenumber: float,
+    apodization: str = "norton-beer-medium",
+    zero_fill: int = 2,
+    x_min: float = 400.0,
+    x_max: float = 4000.0,
+) -> Spectrum:
+    """Single beam from an asymmetric interferogram (short side before ZPD),
+    Mertz phase correction with ramp weighting.
+
+    For benches that record only ``zpd`` samples before the centre burst and
+    many more after it (the Varian 3100). The double-sided region is counted
+    twice by a plain FFT, so it is weighted by a linear ramp (0 at the start
+    of the short side, 0.5 at ZPD, 1 at the mirror image of the start). The
+    apodization runs over the long side; the phase comes from the
+    double-sided region with a triangular window. The transform length is the
+    next power of two at or above the interferogram length, times
+    ``zero_fill``. Checked against Varian Resolutions Pro's own spectra.
+    """
+    igram = np.asarray(igram, dtype=float)
+    n = igram.size
+    if not 4 <= zpd < n - 4:
+        raise ValueError(f"ZPD index {zpd} outside the interferogram (length {n})")
+    dx = 1.0 / laser_wavenumber
+    j = np.arange(n) - zpd
+    long_side = n - 1 - zpd
+
+    ramp = np.clip((j + zpd) / (2.0 * zpd), 0.0, 1.0)
+    weighted = igram * ramp * _window_shape(np.abs(j) / long_side, apodization)
+
+    size = (1 << (n - 1).bit_length()) * max(int(zero_fill), 1)
+    buf = np.zeros(size)
+    buf[: n - zpd] = weighted[zpd:]
+    buf[size - zpd :] = weighted[:zpd]
+    full = np.fft.rfft(buf)
+
+    short = np.abs(j) <= zpd
+    phase_buf = np.zeros(size)
+    js = j[short]
+    seg = igram[short] * (1.0 - np.abs(js) / zpd)
+    phase_buf[js[js >= 0]] = seg[js >= 0]
+    phase_buf[size + js[js < 0]] = seg[js < 0]
+    low = np.fft.rfft(phase_buf)
+    phase = np.arctan2(low.imag, low.real)
+    sb = full.real * np.cos(phase) + full.imag * np.sin(phase)
+
+    wavenumber = np.fft.rfftfreq(size, d=dx)
+    mask = (wavenumber >= x_min) & (wavenumber <= x_max)
+    if not np.any(mask):
+        raise ValueError(f"no FFT bins fall inside [{x_min}, {x_max}] cm-1")
+    resolution = 1.0 / (long_side * dx) * _RESOLUTION_BROADENING.get(apodization, 1.5)
+    return Spectrum(
+        x=wavenumber[mask][::-1],
+        y=sb[mask][::-1],
+        x_unit=XUnit.WAVENUMBER,
+        y_unit=YUnit.SINGLE_BEAM,
+        meta={
+            "resolution_cm": resolution,
+            "apodization": apodization,
+            "zpd_index": zpd,
+            "double_sided": False,
+            "zero_fill": zero_fill,
+            "fft_size": size,
+            "laser_wavenumber": laser_wavenumber,
+            "phase_correction": "mertz (ramp)",
+        },
+        history=[f"interferogram -> single beam (asymmetric Mertz, apodization={apodization})"],
     )
 
 

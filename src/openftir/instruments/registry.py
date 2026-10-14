@@ -25,6 +25,7 @@ ENTRY_POINT_GROUP = "openftir.drivers"
 _BUILTIN: dict[str, str] = {
     "simulated": "openftir.instruments.simulated:SimulatedInstrument",
     "summit": "openftir.instruments.summit:SummitInstrument",
+    "varian": "openftir.instruments.varian:VarianInstrument",
 }
 
 
