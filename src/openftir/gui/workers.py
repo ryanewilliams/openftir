@@ -19,6 +19,7 @@ result signal can easily start the next worker before the previous thread's
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any, Callable, TypeVar
 
@@ -26,6 +27,8 @@ from PySide6.QtCore import QThread, Signal
 
 from openftir.instruments.base import CollectionCancelled, CollectParams, Instrument
 
+
+log = logging.getLogger(__name__)
 
 _W = TypeVar("_W", bound=QThread)
 
@@ -64,6 +67,7 @@ class CallWorker(QThread):
         try:
             result = self._fn(*self._args, **self._kwargs)
         except Exception as exc:  # noqa: BLE001 - reported to the UI, not swallowed
+            log.exception("background call failed")
             self.failed.emit(str(exc))
             return
         self.succeeded.emit(result)
@@ -105,6 +109,7 @@ class CollectWorker(QThread):
             self.cancelled.emit()
             return
         except Exception as exc:  # noqa: BLE001
+            log.exception("collection failed")
             self.failed.emit(str(exc))
             return
         self.succeeded.emit(spectrum)

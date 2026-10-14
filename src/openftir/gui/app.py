@@ -62,6 +62,9 @@ def main() -> int:
     QCoreApplication.setApplicationName("OpenFTIR")
 
     app = QApplication.instance() or QApplication(sys.argv)
+    from openftir.gui.logfile import start_logging
+
+    start_logging()
     apply_light_theme(app)
     app.setWindowIcon(app_icon())
     app.setDesktopFileName("openftir")

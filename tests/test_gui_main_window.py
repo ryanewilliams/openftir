@@ -238,3 +238,23 @@ def test_hidden_mode_does_not_inflate_minimum_window_size(qtbot):
     right = max((d.minimumSizeHint().width() for d in docks if window.dockWidgetArea(d) == Qt.RightDockWidgetArea), default=0)
     needed = left + right + window._central.minimumSizeHint().width()
     assert window.minimumSizeHint().width() <= needed + 60  # separators/margins
+
+
+def test_log_file_records_openftir_messages(tmp_path):
+    import logging
+
+    from openftir.gui.logfile import start_logging
+
+    path = start_logging(tmp_path / "logs" / "openftir.log")
+    try:
+        logging.getLogger("openftir.instruments.varian.driver").info("aligned the bench")
+        for handler in logging.getLogger("openftir").handlers:
+            handler.flush()
+        text = path.read_text(encoding="utf-8")
+        assert "started" in text and "aligned the bench" in text
+    finally:
+        logger = logging.getLogger("openftir")
+        for handler in list(logger.handlers):
+            if getattr(handler, "baseFilename", "") == str(path):
+                logger.removeHandler(handler)
+                handler.close()

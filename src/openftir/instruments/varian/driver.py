@@ -517,6 +517,8 @@ class VarianInstrument(Instrument):
         zpd = p.centre_burst(np.mean(scans, axis=0))
         if abs(zpd - p.ZPD_INDEX) > 2:
             log.warning("Varian: centre burst at sample %d, expected %d", zpd, p.ZPD_INDEX)
+        log.info("Varian: %d scan(s), alignment burst %.0f counts, scan offset %d, centre burst at %d",
+                 n, burst, offset, zpd)
         meta = {
             "driver": self.driver_id,
             "instrument": "Varian 3100 FT-IR",

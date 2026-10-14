@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QRect, QSettings, QSize, QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtCore import QRect, QSettings, QSize, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -686,6 +686,9 @@ class MainWindow(QMainWindow):
         probe_action = QAction("Probe Instrument Connection...", self)
         probe_action.triggered.connect(self._on_probe_instrument)
         help_menu.addAction(probe_action)
+        log_action = QAction("Show Log File", self)
+        log_action.triggered.connect(self._on_show_log)
+        help_menu.addAction(log_action)
 
         help_menu.addSeparator()
 
@@ -1039,6 +1042,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"x = {x:.2f}   y = {y:.4f}")
 
     # -- file menu ------------------------------------------------------------------------
+
+    def _on_show_log(self) -> None:
+        from openftir.gui.logfile import log_path
+
+        folder = log_path().parent
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _on_driver_file_needed(self, driver_id: str, key: str, description: str, name_filter: str, reason: str) -> None:
         """A driver needs a file OpenFTIR doesn't ship (the Varian's firmware):
