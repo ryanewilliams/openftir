@@ -10,7 +10,8 @@ driver sends exactly what Resolutions sent in the captures (checked by
 replaying them, `tests/test_varian_replay.py`), and its spectra match the
 ones Resolutions saved to within 0.004 %T. Only the lab's settings (4 cm⁻¹,
 KBr, 5 kHz, Sensitivity 4) have been captured, so only those are supported.
-Not yet run against the bench itself.
+Tested on the lab's bench (October 2026): collections on a warm bench, and
+the cold-start alignment after power-on followed by collections.
 
 ## Hardware
 
